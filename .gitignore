@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local session store
+backend/aurea_sessions.db*

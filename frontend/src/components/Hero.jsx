@@ -6,6 +6,7 @@ import {
   FileJson,
   FileDown,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import PhoneMock from "./PhoneMock";
 import SlidePreview from "./SlidePreview";
 
@@ -51,12 +52,12 @@ export default function Hero() {
           </p>
 
           <div className="mt-8 flex flex-wrap gap-4">
-            <a
-              href="#get-started"
+            <Link
+              to="/studio"
               className="rounded-full bg-coral-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-coral-500/30 transition hover:bg-coral-600"
             >
               Create Your First Carousel
-            </a>
+            </Link>
             <a
               href="#workflow"
               className="rounded-full border border-white/20 px-7 py-3.5 text-sm font-semibold text-white/90 transition hover:border-white/40 hover:bg-white/5"

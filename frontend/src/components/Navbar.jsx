@@ -1,5 +1,6 @@
 import { Sparkles, Menu, X } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 const LINKS = [
   { label: "Features", href: "#features" },
@@ -14,12 +15,12 @@ export default function Navbar() {
   return (
     <header className="sticky top-0 z-50 border-b border-navy-950/5 bg-cream-50/90 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <a href="#top" className="flex items-center gap-2">
+        <Link to="/" className="flex items-center gap-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-coral-500 text-white">
             <Sparkles size={18} />
           </span>
           <span className="text-lg font-bold tracking-tight">Aurea Studio</span>
-        </a>
+        </Link>
 
         <nav className="hidden items-center gap-8 md:flex">
           {LINKS.map((link) => (
@@ -46,12 +47,12 @@ export default function Navbar() {
           >
             Support
           </a>
-          <a
-            href="#get-started"
+          <Link
+            to="/studio"
             className="rounded-full bg-coral-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-coral-500/30 transition hover:bg-coral-600"
           >
             Start Free
-          </a>
+          </Link>
         </div>
 
         <button
@@ -76,13 +77,13 @@ export default function Navbar() {
                 {link.label}
               </a>
             ))}
-            <a
-              href="#get-started"
+            <Link
+              to="/studio"
               className="mt-2 rounded-full bg-coral-500 px-5 py-2.5 text-center text-sm font-semibold text-white"
               onClick={() => setOpen(false)}
             >
               Start Free
-            </a>
+            </Link>
           </nav>
         </div>
       )}
