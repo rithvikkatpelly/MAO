@@ -3,7 +3,7 @@ import SlidePreview from "./SlidePreview";
 
 const STATS = [
   { value: "4+", label: "Specialized Agents" },
-  { value: "3–5", label: "Ideas Per Research Pass" },
+  { value: "3-5", label: "Ideas Per Research Pass" },
   { value: "50+", label: "Templates & Layouts" },
 ];
 
@@ -26,7 +26,7 @@ export default function StatsBand() {
           </h2>
           <p className="mt-5 max-w-md text-white/70">
             A research agent, a brand-context agent, and a content agent hand
-            off state through LangGraph — with you approving the idea before
+            off state through LangGraph, with you approving the idea before
             anything gets drafted.
           </p>
 

@@ -43,7 +43,7 @@ export default function Footer() {
               <span className="text-lg font-bold">Aurea Studio</span>
             </div>
             <p className="mt-4 max-w-xs text-sm text-white/50">
-              An agentic AI content studio — research, create, and download
+              An agentic AI content studio. Research, create, and download
               beautiful carousels.
             </p>
             <div className="mt-5 flex gap-3">

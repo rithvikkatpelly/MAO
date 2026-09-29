@@ -42,7 +42,7 @@ export default function Hero() {
           <h1 className="mt-6 text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl">
             Turn one idea into a{" "}
             <span className="text-coral-500">scroll-stopping carousel</span>{" "}
-            — in minutes
+            in minutes
           </h1>
 
           <p className="mt-6 max-w-lg text-lg text-white/70">
@@ -53,7 +53,7 @@ export default function Hero() {
 
           <div className="mt-8 flex flex-wrap gap-4">
             <Link
-              to="/studio"
+              to="/app/new"
               className="rounded-full bg-coral-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-coral-500/30 transition hover:bg-coral-600"
             >
               Create Your First Carousel

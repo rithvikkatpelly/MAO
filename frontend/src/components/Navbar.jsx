@@ -48,7 +48,7 @@ export default function Navbar() {
             Support
           </a>
           <Link
-            to="/studio"
+            to="/app"
             className="rounded-full bg-coral-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-coral-500/30 transition hover:bg-coral-600"
           >
             Start Free
@@ -78,7 +78,7 @@ export default function Navbar() {
               </a>
             ))}
             <Link
-              to="/studio"
+              to="/app"
               className="mt-2 rounded-full bg-coral-500 px-5 py-2.5 text-center text-sm font-semibold text-white"
               onClick={() => setOpen(false)}
             >

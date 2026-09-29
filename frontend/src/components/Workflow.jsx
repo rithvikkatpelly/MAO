@@ -22,7 +22,7 @@ const STEPS = [
   {
     icon: MousePointerClick,
     title: "Review & Pick an Idea",
-    desc: "You choose the angle you like best — that's the only manual step.",
+    desc: "You choose the angle you like best. That's the only manual step.",
     gradient: "sunset",
     eyebrow: "Step 03",
     slide: "Selected: Idea #2",

@@ -11,7 +11,7 @@ const FEATURES = [
   {
     icon: Search,
     title: "Live Trend Research",
-    desc: "Web and news search surface 3–5 fresh content ideas for your topic.",
+    desc: "Web and news search surface 3 to 5 fresh content ideas for your topic.",
   },
   {
     icon: Database,
@@ -36,7 +36,7 @@ const FEATURES = [
   {
     icon: ShieldCheck,
     title: "Human-in-the-Loop",
-    desc: "You approve the idea before content generation — no surprise posts.",
+    desc: "You approve the idea before content generation, so there are no surprise posts.",
   },
 ];
 

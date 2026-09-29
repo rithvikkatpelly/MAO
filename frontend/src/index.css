@@ -9,11 +9,24 @@
   --color-coral-600: #f0451f;
   --color-cream-50: #fdf6ef;
 
-  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* app surfaces */
+  --color-ink: #0b1224;
+  --color-muted: #697083;
+  --color-subtle: #9aa0ae;
+  --color-line: #e7e6e2;
+  --color-paper: #f6f5f2;
+  --color-accent: #ff5a3c;
+  --color-accent-600: #ec4424;
+
+  --font-sans: "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --shadow-card: 0 1px 2px rgb(11 18 36 / 0.04), 0 1px 1px rgb(11 18 36 / 0.03);
+  --shadow-pop: 0 12px 32px -8px rgb(11 18 36 / 0.18), 0 2px 6px rgb(11 18 36 / 0.06);
 }
 
 html {
   scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
 }
 
 body {
@@ -21,4 +34,84 @@ body {
   font-family: var(--font-sans);
   background: var(--color-cream-50);
   color: var(--color-navy-950);
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3.5 text-sm font-medium whitespace-nowrap transition select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply bg-ink text-white hover:bg-navy-800;
+  }
+  .btn-accent {
+    @apply bg-accent text-white hover:bg-accent-600;
+  }
+  .btn-secondary {
+    @apply border border-line bg-white text-ink shadow-card hover:border-ink/20 hover:bg-paper;
+  }
+  .btn-ghost {
+    @apply text-muted hover:bg-ink/5 hover:text-ink;
+  }
+  .btn-icon {
+    @apply h-8 w-8 px-0;
+  }
+  .btn-lg {
+    @apply h-11 rounded-xl px-5;
+  }
+
+  .field-label {
+    @apply mb-1.5 block text-xs font-medium text-muted;
+  }
+  .input {
+    @apply w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink transition placeholder:text-subtle focus:border-ink/40 focus:ring-4 focus:ring-ink/5 focus:outline-none;
+  }
+
+  .card {
+    @apply rounded-2xl border border-line bg-white shadow-card;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-line bg-white px-2.5 py-1 text-xs font-medium text-muted transition hover:border-ink/20 hover:text-ink;
+  }
+
+  .kbd {
+    @apply rounded border border-line bg-paper px-1 font-sans text-[10px] font-medium text-muted;
+  }
+}
+
+.bg-dots {
+  background-color: var(--color-paper);
+  background-image: radial-gradient(rgb(11 18 36 / 0.08) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(11 18 36 / 0.15) transparent;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-toast-in {
+  animation: toast-in 180ms ease-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-fade-in {
+  animation: fade-in 160ms ease-out;
 }
