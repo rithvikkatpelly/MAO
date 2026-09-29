@@ -6,6 +6,10 @@ Graph shape (mirrors the architecture diagram):
           -> [deep_research, brand_context]   (parallel)
           -> content -> design -> END
 
+Every node calls its tools directly and makes at most one or two LLM calls.
+(An LLM-driven tool loop costs extra round trips on a local 8B model and made run
+time swing from 1 to 3+ minutes per agent.)
+
 Run it directly with `uv run python -m agents.orchestrator`.
 """
 
@@ -14,19 +18,24 @@ import sqlite3
 from pathlib import Path
 from typing import Annotated, TypedDict
 
-from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
-from langgraph.prebuilt import create_react_agent
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
-from agents.brand_tools import BRAND_TOOLS
+from agents._web import format_sources
+from agents.brand_tools import (
+    get_platform_guidelines,
+    get_previous_content,
+    get_user_preferences,
+    search_brand_knowledge,
+)
 from agents.content_tools import CarouselContent, generate_carousel_content, validate_and_refine
-from agents.deep_research_tools import DEEP_RESEARCH_TOOLS
+from agents.deep_research_tools import extract_key_facts
+from agents.deep_research_tools import search_sources as search_sources_deep
 from agents.design_tools import render_html, select_design
-from agents.research_tools import RESEARCH_TOOLS
-from llm import get_llm
+from agents.research_tools import search_sources
+from llm import invoke_structured
 from platform_specs import get_platform_spec
 
 
@@ -38,14 +47,13 @@ def _keep_last(_current: object, new: object) -> object:
 
 
 class Idea(BaseModel):
-    title: str = Field(description="a short, punchy content idea title")
-    angle: str = Field(description="the specific angle or hook for this idea")
-    reason: str = Field(description="why this idea is worth posting right now")
-    source: str = Field(default="", description="a URL or source that supports this idea, if any")
+    title: str = Field(max_length=90, description="a punchy content idea title, under 10 words")
+    angle: str = Field(max_length=180, description="the specific angle or hook, one sentence")
+    reason: str = Field(max_length=150, description="why this is worth posting now, one short sentence")
 
 
 class IdeaList(BaseModel):
-    ideas: list[Idea]
+    ideas: list[Idea] = Field(min_length=3, max_length=5)
 
 
 class AureaState(TypedDict):
@@ -66,22 +74,15 @@ class AureaState(TypedDict):
 
 
 def research_node(state: AureaState) -> dict:
-    """Research Agent: search the web/news for the topic, propose 3-5 ideas."""
-    agent = create_react_agent(
-        get_llm(temperature=0.5),
-        tools=RESEARCH_TOOLS,
-        prompt=(
-            "You are a content research agent. Use the search tools (at most 3 calls total) "
-            "to find current, concrete angles for the user's topic. When you have enough, "
-            "reply with a short plain-text summary of 3 to 5 distinct content ideas — no JSON."
-        ),
-    )
-    result = agent.invoke({"messages": [HumanMessage(content=state["user_request"])]})
-    synthesis = result["messages"][-1].content
+    """Research Agent: search the top 5 sources, propose 3-5 ideas."""
+    sources = search_sources.invoke({"query": state["user_request"]})
 
-    idea_list = get_llm(temperature=0.3).with_structured_output(IdeaList).invoke(
-        f"Convert this research synthesis into 3-5 structured content ideas for "
-        f"{state['platform']}.\n\n{synthesis}"
+    idea_list = invoke_structured(
+        IdeaList,
+        f"Topic: {state['user_request']}\n\nTop sources:\n{format_sources(sources)}\n\n"
+        f"Propose 3 to 5 distinct {state['platform']} content ideas grounded in these sources.",
+        temperature=0.5,
+        max_tokens=800,
     )
     return {"ideas": [idea.model_dump() for idea in idea_list.ideas]}
 
@@ -97,58 +98,36 @@ def await_idea_selection_node(state: AureaState) -> dict:
 
 
 def deep_research_node(state: AureaState) -> dict:
-    """Deep Research Agent: gather detailed facts about the selected idea."""
+    """Deep Research Agent: top 5 sources for the selected idea, distilled into key facts."""
     idea = state["selected_idea"]
-    agent = create_react_agent(
-        get_llm(temperature=0.3),
-        tools=DEEP_RESEARCH_TOOLS,
-        prompt=(
-            "You are a deep research agent. Use the tools (at most 3 calls total) to gather "
-            "specific, citable facts about the given idea. Finish with a short brief: facts "
-            "as bullet points, each with a source if you have one."
-        ),
+    sources = search_sources_deep.invoke({"query": idea["title"]})
+    facts = extract_key_facts.invoke(
+        {"idea": f"{idea['title']} — {idea['angle']}", "sources_text": format_sources(sources)}
     )
-    result = agent.invoke(
-        {"messages": [HumanMessage(content=f"Idea: {idea['title']} — {idea['angle']}")]}
-    )
-    return {"research_context": result["messages"][-1].content}
+    return {"research_context": facts}
 
 
 def brand_context_node(state: AureaState) -> dict:
     """Brand/Context Agent: pull tone, audience, and platform guidelines."""
-    agent = create_react_agent(
-        get_llm(temperature=0),
-        tools=BRAND_TOOLS,
-        prompt=(
-            "You are a brand context agent. Call get_user_preferences, "
-            "get_platform_guidelines, and search_brand_knowledge to gather everything "
-            "needed to write on-brand content for the given platform. Finish with a short "
-            "brief covering tone, audience, and platform formatting rules."
-        ),
-    )
-    result = agent.invoke(
-        {"messages": [HumanMessage(content=f"Target platform: {state['platform']}")]}
-    )
-
-    tool_findings = {
-        msg.name: msg.content for msg in result["messages"] if msg.type == "tool"
-    }
+    platform = state["platform"]
     return {
         "brand_context": {
-            "summary": result["messages"][-1].content,
-            **tool_findings,
+            "user_preferences": get_user_preferences.invoke({}),
+            "platform_guidelines": get_platform_guidelines.invoke({"platform": platform}),
+            "brand_knowledge": search_brand_knowledge.invoke({"query": "tone audience call to action"}),
+            "previous_content": get_previous_content.invoke({"platform": platform}),
         }
     }
 
 
 def content_node(state: AureaState) -> dict:
-    """Content Agent: generate structured, platform-shaped content, then validate/refine it."""
+    """Content Agent: generate structured, platform-shaped content, then validate it."""
     idea = state["selected_idea"]
     spec = get_platform_spec(state["platform"])
+    brand = state["brand_context"]
     brand_notes = (
-        f"Format requirements: exactly {spec['slide_count']} slide(s), "
-        f"format={spec['format']}, size={spec['width']}x{spec['height']}px.\n\n"
-        f"{json.dumps(state['brand_context'], indent=2)}"
+        f"Format requirements: exactly {spec['slide_count']} slide(s), format={spec['format']}.\n\n"
+        f"{json.dumps(brand, indent=2)}"
     )
 
     draft: CarouselContent = generate_carousel_content.invoke(
@@ -163,9 +142,14 @@ def content_node(state: AureaState) -> dict:
     )
 
     review = validate_and_refine.invoke(
-        {"carousel": draft, "brand_notes": brand_notes, "slide_count": spec["slide_count"]}
+        {
+            "carousel": draft,
+            "brand_notes": brand_notes,
+            "slide_count": spec["slide_count"],
+            "char_limit": brand["platform_guidelines"]["char_limit_per_slide"],
+        }
     )
-    final = review.revised if (not review.is_valid and review.revised) else draft
+    final = review.revised if review.revised else draft
 
     return {"carousel": final.model_dump()}
 

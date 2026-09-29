@@ -1,10 +1,15 @@
+import json
+import queue
+import threading
 import uuid
+from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from langgraph.types import Command
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from agents.orchestrator import AureaState, aurea_graph
 from llm import MODEL_NAME, get_llm
@@ -55,7 +60,6 @@ class IdeaOut(BaseModel):
     title: str
     angle: str
     reason: str
-    source: str = ""
 
 
 class StartCarouselResponse(BaseModel):
@@ -73,7 +77,6 @@ class SlideOut(BaseModel):
     index: int
     headline: str
     body: str
-    visual_note: str
 
 
 class SelectIdeaResponse(BaseModel):
@@ -95,7 +98,75 @@ def list_platforms():
     return PLATFORM_SPECS
 
 
-@app.post("/api/carousel/start", response_model=StartCarouselResponse)
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+# One pipeline at a time: the local model serves a single request stream, so two
+# concurrent runs just make both take roughly twice as long.
+_pipeline_lock = threading.Lock()
+_END = object()
+
+
+def _pipeline_worker(graph_input, thread_id: str, out: queue.Queue, cancelled: threading.Event, build_result):
+    """Runs the graph on its own thread, pushing events onto `out`. Owns the pipeline lock."""
+    try:
+        stream = aurea_graph.stream(graph_input, config=_config(thread_id), stream_mode="tasks")
+        try:
+            for event in stream:
+                if "result" in event:
+                    if event["error"]:
+                        raise RuntimeError(f"{event['name']} failed: {event['error']}")
+                    out.put({"type": "step", "node": event["name"], "status": "done"})
+                else:
+                    out.put({"type": "step", "node": event["name"], "status": "running"})
+                if cancelled.is_set():  # client went away: stop before the next step burns GPU time
+                    return
+        finally:
+            stream.close()
+
+        state = aurea_graph.get_state(_config(thread_id)).values
+        if state.get("errors"):
+            raise RuntimeError("; ".join(state["errors"]))
+        out.put({"type": "result", "data": build_result(state)})
+    except Exception as exc:
+        out.put({"type": "error", "message": str(exc)})
+    finally:
+        out.put(_END)
+        _pipeline_lock.release()
+
+
+async def _stream_pipeline(graph_input, thread_id: str, build_result) -> AsyncIterator[str]:
+    """SSE events: a 'step' per node start/finish (names are LangGraph node names),
+    then one 'result' or 'error'."""
+    if not _pipeline_lock.acquire(blocking=False):
+        yield _sse({"type": "error", "message": "Another generation is already running. Wait for it to finish, then try again."})
+        return
+
+    out: queue.Queue = queue.Queue()
+    cancelled = threading.Event()
+    try:
+        threading.Thread(
+            target=_pipeline_worker, args=(graph_input, thread_id, out, cancelled, build_result), daemon=True
+        ).start()
+    except Exception:
+        _pipeline_lock.release()
+        raise
+
+    try:
+        while True:
+            item = await run_in_threadpool(out.get)
+            if item is _END:
+                break
+            yield _sse(item)
+    finally:
+        cancelled.set()
+
+
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+
+@app.post("/api/carousel/start")
 def start_carousel(req: StartCarouselRequest):
     if req.platform.lower() not in PLATFORM_SPECS:
         raise HTTPException(400, f"unknown platform: {req.platform}")
@@ -114,37 +185,42 @@ def start_carousel(req: StartCarouselRequest):
         "slides_html": [],
         "errors": [],
     }
-    result = aurea_graph.invoke(initial_state, config=_config(thread_id))
+    def build_result(state: dict) -> dict:
+        return StartCarouselResponse(
+            thread_id=thread_id, platform=state["platform"], ideas=state["ideas"]
+        ).model_dump()
 
-    interrupts = result.get("__interrupt__")
-    if not interrupts:
-        raise HTTPException(500, "research step did not pause for idea selection as expected")
-
-    return StartCarouselResponse(
-        thread_id=thread_id, platform=req.platform.lower(), ideas=interrupts[0].value["ideas"]
+    return StreamingResponse(
+        _stream_pipeline(initial_state, thread_id, build_result),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
     )
 
 
-@app.post("/api/carousel/select", response_model=SelectIdeaResponse)
+@app.post("/api/carousel/select")
 def select_idea(req: SelectIdeaRequest):
-    config = _config(req.thread_id)
-    state = aurea_graph.get_state(config)
-    if not state.values:
+    saved = aurea_graph.get_state(_config(req.thread_id)).values
+    if not saved:
         raise HTTPException(404, "unknown thread_id — start a new carousel")
+    if not 0 <= req.idea_index < len(saved["ideas"]):
+        raise HTTPException(400, f"invalid idea_index: {req.idea_index}")
 
-    result = aurea_graph.invoke(Command(resume=req.idea_index), config=config)
-    if result.get("errors"):
-        raise HTTPException(400, "; ".join(result["errors"]))
+    def build_result(state: dict) -> dict:
+        carousel = state["carousel"]
+        return SelectIdeaResponse(
+            thread_id=req.thread_id,
+            platform=state["platform"],
+            template=state["template"],
+            slides=carousel["slides"],
+            caption=carousel["caption"],
+            hashtags=carousel["hashtags"],
+            cta=carousel["cta"],
+        ).model_dump()
 
-    carousel = result["carousel"]
-    return SelectIdeaResponse(
-        thread_id=req.thread_id,
-        platform=result["platform"],
-        template=result["template"],
-        slides=carousel["slides"],
-        caption=carousel["caption"],
-        hashtags=carousel["hashtags"],
-        cta=carousel["cta"],
+    return StreamingResponse(
+        _stream_pipeline(Command(resume=req.idea_index), req.thread_id, build_result),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
     )
 
 

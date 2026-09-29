@@ -6,7 +6,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from agents.content_tools import CarouselContent
-from llm import get_llm
+from llm import invoke_structured
 from platform_specs import get_platform_spec
 from render.templates import TEMPLATE_NAMES, render_slide_html
 
@@ -15,7 +15,6 @@ DesignTemplate = Literal["modern", "minimal", "tech-blue", "corporate", "gradien
 
 class DesignChoice(BaseModel):
     template: DesignTemplate = Field(description="the template style that best fits the content's tone")
-    reason: str = Field(description="one short sentence on why this template fits")
 
 
 @tool
@@ -27,7 +26,6 @@ def select_design(carousel: CarouselContent, platform: str) -> DesignChoice:
         platform: The target platform (e.g. "LinkedIn").
     """
     spec = get_platform_spec(platform)
-    llm = get_llm(temperature=0.2).with_structured_output(DesignChoice)
     prompt = (
         f"Available templates: {', '.join(TEMPLATE_NAMES)}.\n"
         f"Default for {platform} is '{spec['default_template']}' — only deviate if the "
@@ -37,7 +35,7 @@ def select_design(carousel: CarouselContent, platform: str) -> DesignChoice:
         f"Caption: {carousel.caption}\n\n"
         "Pick the single best-fit template."
     )
-    return llm.invoke(prompt)
+    return invoke_structured(DesignChoice, prompt, temperature=0.2, max_tokens=60)
 
 
 @tool
