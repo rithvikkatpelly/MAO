@@ -1,19 +1,19 @@
 """Tools for the Brand/Context Agent: brand guidelines, audience, and platform rules.
 
-There's no real vector DB or user-settings store yet, so these read from a
-small static profile below. Swap _BRAND_KNOWLEDGE / _USER_PREFERENCES /
-_PREVIOUS_CONTENT for a real RAG index and user-settings table later —
-the tool signatures won't need to change.
+Signed-in runs use the creator's real brand kit, questionnaire answers, and
+imported performance data (see api/profile.py: brand_profile_for). The static
+_USER_PREFERENCES and _PREVIOUS_CONTENT below are only a fallback for
+command-line runs. _BRAND_KNOWLEDGE holds general writing rules for everyone.
 """
 
 from langchain_core.tools import tool
 
 _BRAND_KNOWLEDGE = [
-    "Aurea Studio's voice is confident and clear, never hypey or full of jargon.",
-    "We write for builders: founders, engineers, and product people, not general consumers.",
-    "Every carousel should open with a concrete hook, not a vague question.",
-    "Avoid emoji in headlines. One emoji at most per slide, only if it adds meaning.",
-    "Always end a carousel with a clear, specific call to action, not 'thoughts?'.",
+    "Open with a concrete hook: a number, a bold claim, or a specific problem, never a vague question.",
+    "One idea per slide. Short sentences. Plain words over jargon.",
+    "Be specific: names, numbers, and examples beat general advice.",
+    "Never use emojis or em dashes anywhere.",
+    "End with one clear, specific call to action, not 'thoughts?'.",
 ]
 
 _USER_PREFERENCES = {

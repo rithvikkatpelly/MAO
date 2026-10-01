@@ -6,6 +6,7 @@ export async function streamPipeline(url, body, onStep, signal) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    credentials: "include",
     signal,
   });
   if (!res.ok) {

@@ -8,12 +8,26 @@ idea to run with.
 
 ## What it does
 
-- Researches a topic on the live web/news and proposes 3–5 content ideas
-- Pauses for you to pick one idea (human-in-the-loop)
-- Gathers supporting facts and pulls brand/platform guidelines in parallel
-- Writes platform-shaped content — a 6-slide carousel, a single Instagram post, or an X card
-- Picks a visual template and renders each slide to platform-sized HTML
-- Renders the HTML to a downloadable PDF, sized exactly for the target platform
+**Create**
+- Researches a topic on the live web and news and proposes 3 to 5 angles; you pick one (human in the loop)
+- Writes in the creator's own voice: niche, tone, audience, words to avoid, example posts, and their best-performing past posts
+- Carousels (3 to 10 slides, your choice), posters, landscape images, and YouTube thumbnails
+- Text formats: X threads, LinkedIn text posts, Instagram captions, newsletter blurbs, Reels or TikTok scripts (hook, beats, on-screen text), YouTube titles and descriptions
+- Research sources shown in the editor, with a one-click sources slide
+
+**Edit**
+- Per-slide AI actions: rewrite, shorten, make punchier, and 3 alternative hooks
+- Slide layouts: text, stat callout, list, bar chart, code, screenshot, sources; icons and background photos
+- 8 templates, brand colors, uploaded fonts, saved "my templates", and several brand kits (for agencies and multi-brand creators)
+- Repurpose any post into every text format; separate captions per platform (LinkedIn, Instagram, X, Threads)
+- Hook score and a pre-publish checklist (readability, text density, call to action, hashtags, house style)
+
+**Plan and publish**
+- Content calendar with drag to schedule, week and month views, and an AI "plan my week"
+- Ideas backlog (saved research angles, week plans, your notes) and series such as "Tip Tuesday"
+- Trend watch: a scheduled research run on your niche that adds fresh ideas to the backlog
+- Export PNG, ZIP, PDF, or a platform bundle (per-platform folders with images and captions); "open in X, LinkedIn, or Threads" with the text prefilled
+- Insights: import post analytics (CSV) or log results; top posts feed back into the writing agent
 
 ## System Architecture
 
@@ -76,7 +90,13 @@ Playwright + img2pdf (HTML → PDF), SQLite checkpointer, `uv`.
 
 ```
 backend/
-  main.py                 FastAPI app: /chat, /api/carousel/*, /api/platforms
+  main.py                 FastAPI app: /chat, /api/carousel/*, /api/platforms (sign-in required)
+  settings.py             environment config (backend/.env, see .env.example)
+  db.py, schema.sql       Postgres pool (any provider) and idempotent schema applied at startup
+  api/
+    auth.py               Google ID-token sign-in, cookie sessions, /api/auth/*
+    profile.py            brand kit + questionnaire answers, /api/profile
+    projects.py           per-user projects, /api/projects
   llm.py                  ChatOllama client (qwen3:8b, reasoning off by default for speed)
   platform_specs.py       Per-platform slide count / pixel size / default template
   agents/
@@ -94,7 +114,11 @@ backend/
 frontend/
   src/
     pages/
-      LandingPage.jsx       marketing page
+      LandingPage.jsx       marketing page (same design system as the studio)
+      auth/
+        SignInPage.jsx      Continue with Google
+        SignOutPage.jsx     ends the session
+        OnboardingPage.jsx  first-run questionnaire: photo, logo, colors, platforms, content, tone
       app/
         LibraryPage.jsx     project library: search, filter, duplicate, delete, quick start
         CreatePage.jsx      brief -> pick an idea -> generate (live progress, cancel)
@@ -103,7 +127,9 @@ frontend/
     lib/
       templates.jsx         the 8 slide templates (one renderer for preview and export)
       export.jsx            client-side PNG / ZIP / PDF / clipboard export
-      storage.js            projects + brand kit persistence (localStorage, cross-tab sync)
+      auth.js               session state, sign in / out, profile updates
+      storage.js            projects (server-backed) and the brand kit
+      palette.js, image.js  logo color extraction and in-browser image resizing
       text.js               house style: strips em dashes and emojis from generated copy
       api.js, sse.js        backend pipeline client (SSE progress)
     components/              app shell, slide frames, controls, and landing page sections
@@ -119,6 +145,13 @@ frontend/
   ```
   ollama pull qwen3:8b
   ```
+
+### Accounts and database
+
+Sign-in uses Google (free, no billing account needed), and user data lives in any
+PostgreSQL database: Neon's free tier, Postgres on your own machine, or Cloud SQL.
+Follow **[docs/setup.md](docs/setup.md)** to create the OAuth client and pick a database,
+then copy `backend/.env.example` to `backend/.env` and fill it in.
 
 ### Backend
 
@@ -150,8 +183,16 @@ Set `VITE_API_BASE` to point the app at a backend other than `http://localhost:8
 | GET    | `/health`                     | —                                   | server + model status                                 |
 | POST   | `/chat`                       | `{ prompt }`                        | raw model response                                     |
 | GET    | `/api/platforms`              | —                                   | platform specs (slide count, size, template)          |
-| POST   | `/api/carousel/start`         | `{ topic, platform }`               | SSE stream → final `result`: `{ thread_id, platform, ideas[] }` |
-| POST   | `/api/carousel/select`        | `{ thread_id, idea_index }`         | SSE stream → final `result`: `{ thread_id, platform, template, slides[], caption, hashtags[], cta }` |
+| POST   | `/api/carousel/start`         | `{ topic, platform, kind?, slide_count? }` | SSE stream, final `result`: `{ thread_id, platform, ideas[] }` |
+| POST   | `/api/carousel/from-idea`     | `{ idea, topic, platform, kind?, slide_count? }` | `{ thread_id, ideas: [idea] }`, skips research; continue with `/select` index 0 |
+| POST   | `/api/carousel/select`        | `{ thread_id, idea_index }`         | SSE stream, final `result`: `{ thread_id, platform, template, slides[], caption, hashtags[], cta, sources[] }` |
+| POST   | `/api/ai/slide`               | `{ action: rewrite\|shorten\|punchier\|hooks, slide, position, project }` | `{ headline, body }` or `{ hooks[3] }` |
+| POST   | `/api/ai/repurpose`           | `{ format, project }`               | `{ format, data }` for x_thread, linkedin_post, instagram_caption, newsletter, video_script, youtube |
+| POST   | `/api/ai/captions`            | `{ platforms[], project }`          | `{ [platform]: { caption, hashtags[] } }` |
+| POST   | `/api/ai/plan-week`           | `{ start, days, posts, notes? }`    | `{ items: [{ date, title, angle, kind }] }` |
+| GET/PUT/DELETE | `/api/items/{kind}[/{id}]` | kind: idea, series, brand_kit, preset, font, metric | per-user collections; `POST /api/items/{kind}/bulk` for imports |
+| GET/PUT | `/api/trends/settings`, POST `/api/trends/run` | `{ enabled, frequency, topic }` | trend watch settings; run now adds ideas to the backlog |
+| *      | `/api/auth/*`, `/api/profile`, `/api/projects/*` | | Google sign-in, brand kit and voice, projects |
 | GET    | `/api/carousel/{thread_id}/pdf` | —                                  | downloadable PDF                                       |
 
 ### Performance notes
@@ -177,9 +218,12 @@ step timeline (`frontend/src/components/PipelineProgress.jsx`, `frontend/src/lib
 
 ## Current limitations
 
-- **Brand knowledge is placeholder data.** `backend/agents/brand_tools.py` reads from a
-  small static profile — no real vector DB or user-settings store exists yet. Swap it in
-  without changing the tool signatures.
+- **No direct posting.** Publishing through the LinkedIn, X, and Instagram APIs needs an
+  approved developer app on each platform. Until then Aurea exports platform bundles and
+  opens each platform's composer with the text prefilled.
+- **Trend watch runs while the backend runs.** The scheduler is a background thread in the
+  API process; a hosted deployment should keep one instance always on (or call
+  `/api/trends/run` from a cron job).
 - **Sessions persist to a local SQLite file** (`backend/aurea_sessions.db`, gitignored).
   Fine for local/single-instance use; a multi-worker production deployment would need a
   shared Postgres checkpointer instead.

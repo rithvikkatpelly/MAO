@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   AlignCenter,
   AlignLeft,
@@ -10,8 +10,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardCopy,
-  Cloud,
-  CloudOff,
   Copy,
   Download,
   FileText,
@@ -20,6 +18,7 @@ import {
   Lightbulb,
   Loader2,
   MoreHorizontal,
+  Package,
   Plus,
   Redo2,
   Trash2,
@@ -27,17 +26,30 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { Menu } from "../../components/Menu";
+import CaptionsPanel from "../../components/editor/CaptionsPanel";
+import { ChecklistButton, ScheduleButton } from "../../components/editor/Checks";
+import { BrandKitSelect, SavedTemplates } from "../../components/editor/DesignExtras";
+import LayoutFields from "../../components/editor/LayoutFields";
+import SaveStatus from "../../components/editor/SaveStatus";
+import RepurposePanel from "../../components/editor/RepurposePanel";
+import SlideAI from "../../components/editor/SlideAI";
+import Sources from "../../components/editor/Sources";
 import { FitSlide, SlideFrame } from "../../components/SlideFrame";
 import { useToast } from "../../components/Toast";
-import { AutoTextarea, CharCount, ColorPicker, Segmented, TagInput, Toggle } from "../../components/controls";
-import { copyPng, exportPdf, exportPng, exportZip } from "../../lib/export";
+import { AutoTextarea, CharCount, ColorPicker, Segmented, Toggle } from "../../components/controls";
+import { useAutosave } from "../../lib/autosave";
+import { useBrandKits, useProjectBrand } from "../../lib/brandkits";
+import { copyPng, exportBundle, exportPdf, exportPng, exportZip } from "../../lib/export";
+import { CUSTOM_PREFIX, customFontCss, useCustomFonts } from "../../lib/fonts";
 import { KINDS, SIZES, SLIDE_LIMIT, sizeOf } from "../../lib/formats";
 import { useUndoable } from "../../lib/history";
 import { MOD_KEY, isMod, isTyping } from "../../lib/keys";
-import { makeSlide } from "../../lib/project";
-import { saveProject, uid, useBrand, useProject } from "../../lib/storage";
+import { defaultDesign, makeSlide } from "../../lib/project";
+import { insertProject, uid, useProjectsState } from "../../lib/storage";
+import TextEditor from "./TextEditor";
 import { FONTS, TEMPLATES } from "../../lib/templates";
 import { cleanProjectCopy, cleanText, formatHashtags, hasStyleIssues, projectHasStyleIssues } from "../../lib/text";
+
 
 function useMediaQuery(query) {
   const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
@@ -52,22 +64,7 @@ function useMediaQuery(query) {
 
 // ---- top bar ---------------------------------------------------------------
 
-function SaveStatus({ state }) {
-  if (state === "error")
-    return (
-      <span className="flex items-center gap-1.5 text-xs font-medium text-red-600">
-        <CloudOff size={14} /> Not saved, storage full
-      </span>
-    );
-  return (
-    <span className="hidden items-center gap-1.5 text-xs text-subtle sm:flex">
-      {state === "saving" ? <Loader2 size={13} className="animate-spin" /> : <Cloud size={14} />}
-      {state === "saving" ? "Saving" : "Saved"}
-    </span>
-  );
-}
-
-function TopBar({ project, onTitle, saveState, history, exporting, onExport }) {
+function TopBar({ project, onTitle, onChange, saveState, history, exporting, onExport }) {
   const kind = KINDS[project.kind] ?? KINDS.carousel;
   const size = sizeOf(project);
   const multi = project.slides.length > 1;
@@ -92,6 +89,10 @@ function TopBar({ project, onTitle, saveState, history, exporting, onExport }) {
 
       <SaveStatus state={saveState} />
       <div className="mx-1 hidden h-5 w-px bg-line sm:block" />
+      <div className="hidden md:block">
+        <ChecklistButton project={project} />
+      </div>
+      <ScheduleButton project={project} onChange={onChange} />
       <button className="btn btn-ghost btn-icon" onClick={history.undo} disabled={!history.canUndo} title={`Undo (${MOD_KEY} Z)`} aria-label="Undo">
         <Undo2 size={16} />
       </button>
@@ -112,6 +113,7 @@ function TopBar({ project, onTitle, saveState, history, exporting, onExport }) {
           { label: "PNG image", hint: `This slide at ${size.w} x ${size.h}`, icon: ImageDown, onClick: () => onExport("png") },
           multi && { label: "All slides as PNG", hint: "ZIP archive, one file per slide", icon: FolderArchive, onClick: () => onExport("zip") },
           { label: "PDF document", hint: multi ? "Upload as a LinkedIn document post" : "High resolution, print ready", icon: FileText, onClick: () => onExport("pdf") },
+          { label: "Platform bundle", hint: "Folders for LinkedIn, Instagram, X, Threads with captions", icon: Package, onClick: () => onExport("bundle") },
           "divider",
           { label: "Copy image", hint: "This slide, to your clipboard", icon: ClipboardCopy, onClick: () => onExport("copy") },
           { label: "Copy caption", hint: "Caption and hashtags", icon: Copy, onClick: () => onExport("caption") },
@@ -229,6 +231,7 @@ function StyleNotice({ onFix, label = "Clean up" }) {
 }
 
 function SlidePanel({ project, index, onSlide, onClean }) {
+  const hasSources = (project.sources?.length ?? 0) > 0;
   const slide = project.slides[index];
   const limits = project.kind === "image" ? { headline: 70, body: 140 } : { headline: 60, body: 180 };
   const slideIssues = hasStyleIssues(slide.kicker) || hasStyleIssues(slide.headline) || hasStyleIssues(slide.body);
@@ -281,6 +284,7 @@ function SlidePanel({ project, index, onSlide, onClean }) {
               onChange={(e) => onSlide({ body: e.target.value }, `body-${slide.id}`)}
             />
           </div>
+          <SlideAI project={project} index={index} onApply={(patch) => onSlide(patch)} />
           {slideIssues && (
             <StyleNotice
               onFix={() => onSlide({ kicker: cleanText(slide.kicker), headline: cleanText(slide.headline), body: cleanText(slide.body) })}
@@ -288,6 +292,9 @@ function SlidePanel({ project, index, onSlide, onClean }) {
           )}
           {!slideIssues && projectHasStyleIssues(project) && <StyleNotice label="Clean all" onFix={onClean} />}
         </div>
+      </Section>
+      <Section title="Layout and media">
+        <LayoutFields slide={slide} onSlide={onSlide} hasSources={hasSources} />
       </Section>
       {project.source?.idea && (
         <Section title="Idea">
@@ -312,12 +319,19 @@ function SlidePanel({ project, index, onSlide, onClean }) {
 
 function DesignPanel({ project, index, brand, onDesign, onSize }) {
   const { design } = project;
+  const customFonts = useCustomFonts();
+  const fontOptions = [
+    ["auto", { label: "Template", css: undefined }],
+    ...Object.entries(FONTS),
+    ...customFonts.map((f) => [CUSTOM_PREFIX + f.family, { label: f.family, css: customFontCss(f.family) }]),
+  ];
   const slide = project.slides[index];
   const kind = KINDS[project.kind] ?? KINDS.carousel;
   const multi = project.slides.length > 1;
 
   return (
     <>
+      <BrandKitSection project={project} onDesign={onDesign} />
       <Section title="Template">
         <div className="grid grid-cols-2 gap-3">
           {Object.entries(TEMPLATES).map(([id, tpl]) => {
@@ -345,11 +359,11 @@ function DesignPanel({ project, index, brand, onDesign, onSize }) {
 
       <Section title="Headline font">
         <div className="grid grid-cols-2 gap-1.5">
-          {[["auto", { label: "Template", css: undefined }], ...Object.entries(FONTS)].map(([id, font]) => (
+          {fontOptions.map(([id, font]) => (
             <button
               key={id}
               onClick={() => onDesign({ font: id })}
-              className={`h-10 rounded-lg border px-3 text-left text-sm transition ${
+              className={`h-10 truncate rounded-lg border px-3 text-left text-sm transition ${
                 design.font === id ? "border-ink bg-white text-ink" : "border-line text-muted hover:border-ink/25 hover:text-ink"
               }`}
               style={{ fontFamily: font.css }}
@@ -402,6 +416,10 @@ function DesignPanel({ project, index, brand, onDesign, onSize }) {
         </div>
       </Section>
 
+      <Section title="My templates">
+        <SavedTemplates project={project} onDesign={onDesign} />
+      </Section>
+
       <Section>
         <button
           className="btn btn-secondary w-full"
@@ -420,39 +438,21 @@ function DesignPanel({ project, index, brand, onDesign, onSize }) {
   );
 }
 
-const CAPTION_LIMITS = [
-  { label: "X", limit: 280 },
-  { label: "Instagram", limit: 2200 },
-  { label: "LinkedIn", limit: 3000 },
-];
+function BrandKitSection({ project, onDesign }) {
+  const kits = useBrandKits();
+  if (kits.length < 2) return null;
+  return (
+    <Section title="Brand kit">
+      <BrandKitSelect project={project} onDesign={onDesign} />
+    </Section>
+  );
+}
 
-function PostPanel({ project, onChange, onCopyCaption }) {
-  const full = [project.caption, formatHashtags(project.hashtags)].filter(Boolean).join("\n\n");
-  const issues = hasStyleIssues(project.caption) || hasStyleIssues(project.cta);
-
+function PostPanel({ project, onChange, onAddSourcesSlide }) {
   return (
     <>
-      <Section title="Caption" action={<CharCount value={full} />}>
-        <AutoTextarea
-          minRows={5}
-          value={project.caption}
-          placeholder="Write the text that goes with your post"
-          onChange={(e) => onChange({ caption: e.target.value }, "caption")}
-        />
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {CAPTION_LIMITS.map(({ label, limit }) => {
-            const over = full.length > limit;
-            return (
-              <span key={label} className={`rounded-md px-1.5 py-0.5 text-[11px] ${over ? "bg-red-50 text-red-600" : "bg-paper text-subtle"}`}>
-                {label} {over ? "over limit" : "fits"}
-              </span>
-            );
-          })}
-        </div>
-      </Section>
-      <Section title="Hashtags">
-        <TagInput value={project.hashtags} onChange={(hashtags) => onChange({ hashtags })} />
-        <p className="mt-2 text-xs text-subtle">Press Enter or space to add. Three to five focused tags work best.</p>
+      <Section title="Captions">
+        <CaptionsPanel project={project} onChange={onChange} />
       </Section>
       <Section title="Call to action">
         <input
@@ -463,16 +463,14 @@ function PostPanel({ project, onChange, onCopyCaption }) {
           onChange={(e) => onChange({ cta: e.target.value }, "cta")}
         />
         <p className="mt-2 text-xs text-subtle">Shown as a button on the last slide.</p>
-      </Section>
-      <Section>
-        {issues && (
-          <div className="mb-3">
-            <StyleNotice onFix={() => onChange({ caption: cleanText(project.caption), cta: cleanText(project.cta) })} />
+        {hasStyleIssues(project.cta) && (
+          <div className="mt-3">
+            <StyleNotice onFix={() => onChange({ cta: cleanText(project.cta) })} />
           </div>
         )}
-        <button className="btn btn-primary w-full" onClick={onCopyCaption} disabled={!full}>
-          <Copy size={15} /> Copy caption and hashtags
-        </button>
+      </Section>
+      <Section title="Research sources">
+        <Sources project={project} onAddSlide={onAddSourcesSlide} />
       </Section>
     </>
   );
@@ -484,46 +482,24 @@ const TABS = [
   { value: "slide", label: "Slide" },
   { value: "design", label: "Design" },
   { value: "post", label: "Post" },
+  { value: "repurpose", label: "Repurpose" },
 ];
 
 function Editor({ initial }) {
-  const brand = useBrand();
   const toast = useToast();
+  const navigate = useNavigate();
   const history = useUndoable(initial);
   const { state: project, set } = history;
+  const brand = useProjectBrand(project);
   const [active, setActive] = useState(0);
   const [tab, setTab] = useState("slide");
-  const [saveState, setSaveState] = useState("saved");
   const [exporting, setExporting] = useState(null);
   const wide = useMediaQuery("(min-width: 1024px)");
 
   const index = Math.min(active, project.slides.length - 1);
   const slide = project.slides[index];
 
-  // ---- autosave: debounced, flushed on unmount and before the tab closes
-  const pending = useRef(null);
-  const flush = useCallback(() => {
-    if (!pending.current) return;
-    const ok = saveProject(pending.current);
-    pending.current = null;
-    setSaveState(ok ? "saved" : "error");
-  }, []);
-
-  useEffect(() => {
-    if (project === initial) return;
-    pending.current = project;
-    setSaveState("saving");
-    const timer = setTimeout(flush, 500);
-    return () => clearTimeout(timer);
-  }, [project, initial, flush]);
-
-  useEffect(() => {
-    window.addEventListener("beforeunload", flush);
-    return () => {
-      window.removeEventListener("beforeunload", flush);
-      flush();
-    };
-  }, [flush]);
+  const { saveState, flush } = useAutosave(project, initial);
 
   // ---- mutations
   const update = useCallback((patch, group) => set((p) => ({ ...p, ...patch }), group), [set]);
@@ -580,6 +556,28 @@ function Editor({ initial }) {
     [set],
   );
 
+  const addSourcesSlide = useCallback(() => {
+    set((p) => ({ ...p, slides: [...p.slides, makeSlide({ layout: "sources", kicker: "Sources", headline: "Where this comes from" })] }));
+    setActive(project.slides.length);
+    setTab("slide");
+  }, [set, project.slides.length]);
+
+  function makeThumbnail(text) {
+    const thumb = insertProject({
+      title: `${project.title} thumbnail`,
+      kind: "thumbnail",
+      size: "youtube",
+      design: { ...defaultDesign("thumbnail", brand, "bold"), brandKitId: project.design.brandKitId, accent: project.design.accent, showBrand: false },
+      slides: [makeSlide({ headline: text })],
+      caption: "",
+      hashtags: [],
+      cta: "",
+      source: project.source,
+    });
+    toast("Thumbnail created");
+    navigate(`/app/p/${thumb.id}`);
+  }
+
   // ---- export
   async function handleExport(type) {
     if (type === "caption") {
@@ -598,6 +596,7 @@ function Editor({ initial }) {
       else if (type === "zip") await exportZip(project, brand);
       else if (type === "pdf") await exportPdf(project, brand);
       else if (type === "copy") await copyPng(project, brand, index);
+      else if (type === "bundle") await exportBundle(project, brand);
       toast(type === "copy" ? "Image copied to clipboard" : "Download started");
     } catch (err) {
       console.error(err);
@@ -653,7 +652,15 @@ function Editor({ initial }) {
 
   return (
     <div className="flex min-h-dvh flex-col bg-paper lg:h-dvh">
-      <TopBar project={project} onTitle={(title) => update({ title }, "title")} saveState={saveState} history={history} exporting={exporting} onExport={handleExport} />
+      <TopBar
+        project={project}
+        onTitle={(title) => update({ title }, "title")}
+        onChange={update}
+        saveState={saveState}
+        history={history}
+        exporting={exporting}
+        onExport={handleExport}
+      />
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {wide && <aside className="w-[200px] shrink-0 border-r border-line bg-paper">{rail}</aside>}
@@ -690,7 +697,13 @@ function Editor({ initial }) {
             {tab === "design" && (
               <DesignPanel project={project} index={index} brand={brand} onDesign={updateDesign} onSize={(size) => update({ size })} />
             )}
-            {tab === "post" && <PostPanel project={project} onChange={update} onCopyCaption={() => handleExport("caption")} />}
+            {tab === "post" && <PostPanel project={project} onChange={update} onAddSourcesSlide={addSourcesSlide} />}
+            {tab === "repurpose" && (
+              <Section title="Repurpose this post">
+                <p className="mb-3 text-xs text-subtle">Turn these slides into other formats. Everything stays editable and saves with the project.</p>
+                <RepurposePanel project={project} onChange={update} onMakeThumbnail={makeThumbnail} />
+              </Section>
+            )}
           </div>
         </aside>
       </div>
@@ -700,22 +713,32 @@ function Editor({ initial }) {
 
 export default function EditorPage() {
   const { id } = useParams();
-  const project = useProject(id);
+  const { status, items } = useProjectsState();
+  const project = items.find((p) => p.id === id) ?? null;
   // Freeze the first loaded copy per project; the editor owns the state from then on.
   const [frozen, setFrozen] = useState({ id, project });
-  if (frozen.id !== id) setFrozen({ id, project });
-  const initial = frozen.id === id ? frozen.project : project;
+  if (frozen.id !== id || (!frozen.project && project)) setFrozen({ id, project });
+  const initial = frozen.id === id && frozen.project ? frozen.project : project;
+
+  if (!initial && (status === "loading" || status === "idle")) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-paper text-subtle">
+        <Loader2 size={20} className="animate-spin" />
+      </div>
+    );
+  }
 
   if (!initial) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-paper px-6 text-center">
         <h1 className="text-xl font-semibold text-ink">Project not found</h1>
-        <p className="text-sm text-muted">It may have been deleted, or it was created in another browser.</p>
+        <p className="text-sm text-muted">It may have been deleted, or it belongs to another account.</p>
         <Link to="/app" className="btn btn-primary mt-3">
           Back to projects
         </Link>
       </div>
     );
   }
+  if (initial.kind === "text") return <TextEditor key={id} initial={initial} />;
   return <Editor key={id} initial={initial} />;
 }

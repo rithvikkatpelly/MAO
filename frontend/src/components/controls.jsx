@@ -150,3 +150,35 @@ export function AutoTextarea({ className = "", minRows = 2, ...props }) {
     />
   );
 }
+
+// Pill choices. `multiple` makes value an array; otherwise a single string.
+export function ChoiceChips({ options, value, onChange, multiple = false, max }) {
+  const selected = multiple ? value : [value];
+  function toggle(option) {
+    if (!multiple) return onChange(option === value ? "" : option);
+    if (value.includes(option)) return onChange(value.filter((v) => v !== option));
+    if (max && value.length >= max) return;
+    onChange([...value, option]);
+  }
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((option) => {
+        const active = selected.includes(option);
+        return (
+          <button
+            key={option}
+            type="button"
+            aria-pressed={active}
+            onClick={() => toggle(option)}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm transition ${
+              active ? "border-ink bg-ink text-white" : "border-line bg-white text-ink hover:border-ink/30"
+            }`}
+          >
+            {active && multiple && <Check size={13} strokeWidth={2.5} />}
+            {option}
+          </button>
+        );
+      })}
+    </div>
+  );
+}

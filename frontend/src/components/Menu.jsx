@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 // A small dropdown menu. `trigger` receives { open, toggle } and returns the button.
-export function Menu({ trigger, items, align = "right", width = "w-56" }) {
+export function Menu({ trigger, items, align = "right", width = "w-56", up = false }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -23,7 +23,7 @@ export function Menu({ trigger, items, align = "right", width = "w-56" }) {
       {open && (
         <div
           role="menu"
-          className={`animate-fade-in absolute top-full z-50 mt-1.5 ${width} ${
+          className={`animate-fade-in absolute z-50 ${up ? "bottom-full mb-1.5" : "top-full mt-1.5"} ${width} ${
             align === "right" ? "right-0" : "left-0"
           } rounded-xl border border-line bg-white p-1 shadow-pop`}
         >

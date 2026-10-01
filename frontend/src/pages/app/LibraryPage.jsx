@@ -1,14 +1,16 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Copy, FolderOpen, MoreHorizontal, Plus, Search, Sparkles, Trash2 } from "lucide-react";
+import { CalendarClock, Copy, FolderOpen, Loader2, MoreHorizontal, Plus, Search, Sparkles, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "../../components/Dialog";
 import { Menu } from "../../components/Menu";
 import { FitSlide } from "../../components/SlideFrame";
 import { Segmented } from "../../components/controls";
 import { useToast } from "../../components/Toast";
-import { KINDS, sizeOf } from "../../lib/formats";
+import { resolveBrand, useBrandKits } from "../../lib/brandkits";
+import { KINDS, TEXT_FORMATS, sizeOf } from "../../lib/formats";
+import { outputToText } from "../../lib/outputs";
 import { blankProject } from "../../lib/project";
-import { deleteProject, duplicateProject, insertProject, useBrand, useProjects } from "../../lib/storage";
+import { deleteProject, duplicateProject, insertProject, useBrand, useProjectsState } from "../../lib/storage";
 import { relativeTime } from "../../lib/time";
 
 const FILTERS = [
@@ -16,20 +18,46 @@ const FILTERS = [
   { value: "carousel", label: "Carousels" },
   { value: "poster", label: "Posters" },
   { value: "image", label: "Images" },
+  { value: "thumbnail", label: "Thumbnails" },
+  { value: "text", label: "Text" },
 ];
+
+function TextThumb({ project }) {
+  const format = TEXT_FORMATS[project.textFormat] ?? TEXT_FORMATS.linkedin_post;
+  const text = outputToText(project.textFormat, project.outputs?.[project.textFormat]);
+  return (
+    <div className="absolute inset-4 overflow-hidden rounded-md bg-white p-4 shadow-card">
+      <p className="flex items-center gap-1.5 text-[11px] font-medium text-accent">
+        <format.icon size={12} /> {format.label}
+      </p>
+      <p className="mt-2 line-clamp-6 text-xs leading-relaxed whitespace-pre-line text-muted">{text || "Nothing written yet."}</p>
+    </div>
+  );
+}
 
 function ProjectCard({ project, brand, onDelete }) {
   const navigate = useNavigate();
   const toast = useToast();
-  const kind = KINDS[project.kind] ?? KINDS.carousel;
+  const isText = project.kind === "text";
+  const kind = isText ? TEXT_FORMATS[project.textFormat] ?? TEXT_FORMATS.linkedin_post : KINDS[project.kind] ?? KINDS.carousel;
   const size = sizeOf(project);
 
   return (
     <div className="group card relative overflow-hidden transition hover:shadow-pop">
       <Link to={`/app/p/${project.id}`} className="block" aria-label={`Open ${project.title}`}>
         <div className="bg-dots relative aspect-[4/3] border-b border-line">
-          <FitSlide project={project} slide={project.slides[0]} index={0} brand={brand} padding={18} className="absolute inset-0" frameClassName="rounded-md shadow-card" />
-          {project.slides.length > 1 && (
+          {isText ? (
+            <TextThumb project={project} />
+          ) : (
+            <FitSlide project={project} slide={project.slides[0]} index={0} brand={brand} padding={18} className="absolute inset-0" frameClassName="rounded-md shadow-card" />
+          )}
+          {project.scheduledAt && (
+            <span className="absolute top-2.5 left-2.5 flex items-center gap-1 rounded-md bg-white/90 px-1.5 py-0.5 text-[11px] font-medium text-ink shadow-card backdrop-blur">
+              <CalendarClock size={11} className="text-accent" />
+              {new Date(project.scheduledAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+            </span>
+          )}
+          {!isText && project.slides.length > 1 && (
             <span className="absolute bottom-2.5 left-2.5 rounded-md bg-ink/80 px-1.5 py-0.5 text-[11px] font-medium text-white backdrop-blur">
               {project.slides.length} slides
             </span>
@@ -40,8 +68,12 @@ function ProjectCard({ project, brand, onDelete }) {
           <p className="mt-0.5 flex items-center gap-1.5 text-xs text-subtle">
             <kind.icon size={12} />
             {kind.label}
-            <span aria-hidden>·</span>
-            {size.ratio}
+            {!isText && (
+              <>
+                <span aria-hidden>·</span>
+                {size.ratio}
+              </>
+            )}
             <span aria-hidden>·</span>
             Edited {relativeTime(project.updatedAt)}
           </p>
@@ -97,7 +129,7 @@ function QuickStart() {
   }
 
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
       <Link to="/app/new" className="group flex flex-col justify-between rounded-2xl bg-ink p-4 text-white transition hover:bg-navy-800 md:col-span-1">
         <Sparkles size={18} className="text-accent" />
         <div className="mt-8">
@@ -119,8 +151,8 @@ function QuickStart() {
 }
 
 export default function LibraryPage() {
-  const projects = useProjects();
-  const brand = useBrand();
+  const { status, items: projects } = useProjectsState();
+  const kits = useBrandKits();
   const toast = useToast();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
@@ -155,13 +187,17 @@ export default function LibraryPage() {
             <Search size={15} className="absolute top-1/2 left-3 -translate-y-1/2 text-subtle" />
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects" className="input pl-9" aria-label="Search projects" />
           </div>
-          <div className="sm:w-96">
+          <div className="sm:w-[34rem]">
             <Segmented value={filter} onChange={setFilter} options={FILTERS} size="sm" />
           </div>
         </div>
       )}
 
-      {projects.length === 0 ? (
+      {status === "loading" ? (
+        <div className="mt-16 flex justify-center text-subtle">
+          <Loader2 size={20} className="animate-spin" />
+        </div>
+      ) : projects.length === 0 ? (
         <div className="mt-10 flex flex-col items-center rounded-2xl border border-dashed border-line bg-white/60 px-6 py-16 text-center">
           <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent/10 text-accent">
             <Sparkles size={20} />
@@ -179,7 +215,7 @@ export default function LibraryPage() {
       ) : (
         <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {visible.map((p) => (
-            <ProjectCard key={p.id} project={p} brand={brand} onDelete={setPendingDelete} />
+            <ProjectCard key={p.id} project={p} brand={resolveBrand(kits, p.design?.brandKitId)} onDelete={setPendingDelete} />
           ))}
         </div>
       )}

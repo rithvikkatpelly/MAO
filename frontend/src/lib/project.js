@@ -18,7 +18,8 @@ const BACKEND_TEMPLATES = {
 export function defaultDesign(kind, brand, template) {
   const multi = kind === "carousel";
   return {
-    template: template ?? (brand.template !== "auto" ? brand.template : "midnight"),
+    brandKitId: brand.id && brand.id !== "primary" ? brand.id : undefined,
+    template: template ?? (brand.template !== "auto" ? brand.template : kind === "thumbnail" ? "bold" : "midnight"),
     accent: brand.accent,
     font: brand.font,
     align: "left",
@@ -39,6 +40,7 @@ const BLANK_SLIDES = {
   ],
   poster: [{ kicker: "Announcement", headline: "Say the one thing that matters", body: "Add a short supporting line with the key detail." }],
   image: [{ kicker: "New", headline: "A clear, bold headline", body: "A short line of context for your readers." }],
+  thumbnail: [{ kicker: "", headline: "Big bold words", body: "" }],
 };
 
 export function blankProject(kind, brand, size) {
@@ -70,6 +72,28 @@ export function projectFromResult({ result, idea, topic, kind, size, brand, temp
     caption: result.caption,
     hashtags,
     cta: result.cta,
+    sources: result.sources ?? [],
     source: { topic, idea },
   });
+}
+
+// A text-only project (thread, post, script) written from a generated post.
+export function textProjectFromResult({ result, idea, topic, format, output, brand }) {
+  return {
+    ...cleanProjectCopy({
+      title: idea.title,
+      kind: "text",
+      size: "",
+      design: { brandKitId: brand.id && brand.id !== "primary" ? brand.id : undefined },
+      // The researched slides stay on the project as context for rewrites into other formats.
+      slides: result.slides.map((s) => makeSlide({ headline: s.headline, body: s.body })),
+      caption: result.caption,
+      hashtags: result.hashtags.map((h) => h.replace(/^#/, "")),
+      cta: result.cta,
+      sources: result.sources ?? [],
+      source: { topic, idea },
+    }),
+    textFormat: format,
+    outputs: { [format]: output },
+  };
 }

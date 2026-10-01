@@ -1,116 +1,166 @@
 import { useMemo, useSyncExternalStore } from "react";
+import { api } from "./api";
+import { updateProfile, useAuth } from "./auth";
 
-// Projects and the brand kit live in the browser (localStorage), synced across tabs.
-// Every access is guarded: storage can be full, blocked, or unavailable.
+// Projects are stored per user in Postgres. The editor works on an in-memory copy
+// that updates instantly; writes go to the server in the background.
 
-function read(key, fallback) {
+let state = { status: "idle", owner: null, items: [] };
+const listeners = new Set();
+const errorListeners = new Set();
+
+function set(patch) {
+  state = { ...state, ...patch };
+  listeners.forEach((l) => l());
+}
+
+function subscribe(listener) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function reportError(message) {
+  errorListeners.forEach((l) => l(message));
+}
+
+export function onSyncError(listener) {
+  errorListeners.add(listener);
+  return () => errorListeners.delete(listener);
+}
+
+export function useProjectsState() {
+  return useSyncExternalStore(subscribe, () => state);
+}
+
+export function useProjects() {
+  return useProjectsState().items;
+}
+
+export function useProject(id) {
+  return useProjects().find((p) => p.id === id) ?? null;
+}
+
+export function uid() {
+  return crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function strip(project) {
+  const { id: _id, createdAt: _c, updatedAt: _u, ...data } = project;
+  return data;
+}
+
+// Projects made before accounts existed lived in this browser only; move them to the account once.
+const LEGACY_KEY = "aurea.projects.v1";
+
+async function importLegacyProjects() {
+  let legacy = [];
   try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
+    legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || "[]");
   } catch {
-    return fallback;
+    return [];
+  }
+  if (!Array.isArray(legacy) || !legacy.length) return [];
+  const imported = [];
+  for (const p of legacy) {
+    try {
+      imported.push(await api(`/api/projects/${p.id}`, { method: "PUT", body: strip(p) }));
+    } catch {
+      // skip anything the server rejects; the rest still move over
+    }
+  }
+  try {
+    localStorage.removeItem(LEGACY_KEY);
+  } catch {
+    // storage blocked: nothing to clean up
+  }
+  return imported;
+}
+
+export async function loadProjects(userId) {
+  if (state.owner === userId && state.status !== "error") return;
+  set({ status: "loading", owner: userId, items: [] });
+  try {
+    const items = await api("/api/projects");
+    const imported = await importLegacyProjects();
+    const ids = new Set(items.map((p) => p.id));
+    set({ status: "ready", items: [...imported.filter((p) => !ids.has(p.id)), ...items] });
+  } catch (err) {
+    set({ status: "error" });
+    reportError(err.message);
   }
 }
 
-function write(key, value) {
+export function resetProjects() {
+  set({ status: "idle", owner: null, items: [] });
+}
+
+function upsertLocal(project) {
+  set({ items: [project, ...state.items.filter((p) => p.id !== project.id)] });
+}
+
+export function insertProject(data) {
+  const now = new Date().toISOString();
+  const project = { ...data, id: uid(), createdAt: now, updatedAt: now };
+  upsertLocal(project);
+  api(`/api/projects/${project.id}`, { method: "PUT", body: strip(project) }).catch((err) =>
+    reportError(`Could not save "${project.title}": ${err.message}`),
+  );
+  return project;
+}
+
+// Resolves to true once the server has the change. `keepalive` lets it finish while the page unloads.
+export async function saveProject(project, { keepalive = false } = {}) {
+  upsertLocal({ ...project, updatedAt: new Date().toISOString() });
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    await api(`/api/projects/${project.id}`, { method: "PUT", body: strip(project), keepalive });
     return true;
   } catch {
     return false;
   }
 }
 
-function createStore(key, fallback) {
-  let value = read(key, fallback);
-  const listeners = new Set();
-  const emit = () => listeners.forEach((l) => l());
-
-  window.addEventListener("storage", (e) => {
-    if (e.key === key) {
-      value = read(key, fallback);
-      emit();
-    }
-  });
-
-  return {
-    get: () => value,
-    set(next) {
-      value = typeof next === "function" ? next(value) : next;
-      const ok = write(key, value);
-      emit();
-      return ok;
-    },
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-  };
-}
-
-// ---- projects ------------------------------------------------------------
-
-const projects = createStore("aurea.projects.v1", []);
-
-export function useProjects() {
-  return useSyncExternalStore(projects.subscribe, projects.get);
-}
-
-export function useProject(id) {
-  const all = useProjects();
-  return all.find((p) => p.id === id) ?? null;
-}
-
-export function uid() {
-  return crypto.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
-export function insertProject(data) {
-  const now = new Date().toISOString();
-  const project = { ...data, id: uid(), createdAt: now, updatedAt: now };
-  const ok = projects.set((all) => [project, ...all]);
-  if (!ok) throw new Error("Browser storage is full. Delete a few projects and try again.");
-  return project;
-}
-
-// Returns false when the browser refused the write (quota or privacy mode).
-export function saveProject(project) {
-  const updated = { ...project, updatedAt: new Date().toISOString() };
-  return projects.set((all) => [updated, ...all.filter((p) => p.id !== project.id)]);
-}
-
 export function deleteProject(id) {
-  projects.set((all) => all.filter((p) => p.id !== id));
+  set({ items: state.items.filter((p) => p.id !== id) });
+  api(`/api/projects/${id}`, { method: "DELETE" }).catch((err) => reportError(`Could not delete the project: ${err.message}`));
 }
 
 export function duplicateProject(id) {
-  const source = projects.get().find((p) => p.id === id);
+  const source = state.items.find((p) => p.id === id);
   if (!source) return null;
   return insertProject({
-    ...structuredClone(source),
+    ...structuredClone(strip(source)),
     title: `${source.title} (copy)`,
     slides: source.slides.map((s) => ({ ...s, id: uid() })),
   });
 }
 
-// ---- brand kit -----------------------------------------------------------
+// ---- brand kit (stored on the user's profile) ------------------------------
 
 export const DEFAULT_BRAND = {
   name: "Your Brand",
   handle: "@yourhandle",
   accent: "#ff5a3c",
+  secondary: "",
+  palette: [],
+  mark: "initials",
+  logo: "",
+  avatar: "",
   template: "auto",
   font: "auto",
   hashtags: [],
 };
 
-const brand = createStore("aurea.brand.v1", DEFAULT_BRAND);
-
 export function useBrand() {
-  const value = useSyncExternalStore(brand.subscribe, brand.get);
-  return useMemo(() => ({ ...DEFAULT_BRAND, ...value }), [value]);
+  const { profile } = useAuth();
+  const saved = profile?.brand;
+  return useMemo(() => ({ ...DEFAULT_BRAND, ...saved }), [saved]);
 }
 
-export function saveBrand(next) {
-  return brand.set(next);
+export async function saveBrand(next) {
+  try {
+    await updateProfile({ brand: { ...DEFAULT_BRAND, ...next } });
+    return true;
+  } catch {
+    return false;
+  }
 }

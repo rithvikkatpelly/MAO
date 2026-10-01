@@ -1,22 +1,20 @@
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Link, Navigate, Route, Routes } from "react-router-dom";
-import { Loader2 } from "lucide-react";
 import AppShell from "./components/AppShell";
+import Protected, { FullPageLoader } from "./components/Protected";
 import { ToastProvider } from "./components/Toast";
 import LandingPage from "./pages/LandingPage";
 
+const SignInPage = lazy(() => import("./pages/auth/SignInPage"));
+const SignOutPage = lazy(() => import("./pages/auth/SignOutPage"));
+const OnboardingPage = lazy(() => import("./pages/auth/OnboardingPage"));
 const LibraryPage = lazy(() => import("./pages/app/LibraryPage"));
 const CreatePage = lazy(() => import("./pages/app/CreatePage"));
 const BrandPage = lazy(() => import("./pages/app/BrandPage"));
 const EditorPage = lazy(() => import("./pages/app/EditorPage"));
-
-function PageLoader() {
-  return (
-    <div className="flex min-h-[60vh] items-center justify-center text-subtle">
-      <Loader2 size={20} className="animate-spin" />
-    </div>
-  );
-}
+const CalendarPage = lazy(() => import("./pages/app/CalendarPage"));
+const IdeasPage = lazy(() => import("./pages/app/IdeasPage"));
+const InsightsPage = lazy(() => import("./pages/app/InsightsPage"));
 
 function NotFound() {
   return (
@@ -34,16 +32,29 @@ export default function App() {
   return (
     <BrowserRouter>
       <ToastProvider>
-        <Suspense fallback={<PageLoader />}>
+        <Suspense fallback={<FullPageLoader />}>
           <Routes>
             <Route path="/" element={<LandingPage />} />
+            <Route path="/signin" element={<SignInPage />} />
+            <Route path="/signout" element={<SignOutPage />} />
             <Route path="/studio" element={<Navigate to="/app/new" replace />} />
-            <Route path="/app" element={<AppShell />}>
-              <Route index element={<LibraryPage />} />
-              <Route path="new" element={<CreatePage />} />
-              <Route path="brand" element={<BrandPage />} />
+
+            <Route element={<Protected requireOnboarded={false} />}>
+              <Route path="/onboarding" element={<OnboardingPage />} />
             </Route>
-            <Route path="/app/p/:id" element={<EditorPage />} />
+
+            <Route element={<Protected />}>
+              <Route path="/app" element={<AppShell />}>
+                <Route index element={<LibraryPage />} />
+                <Route path="new" element={<CreatePage />} />
+                <Route path="brand" element={<BrandPage />} />
+                <Route path="calendar" element={<CalendarPage />} />
+                <Route path="ideas" element={<IdeasPage />} />
+                <Route path="insights" element={<InsightsPage />} />
+              </Route>
+              <Route path="/app/p/:id" element={<EditorPage />} />
+            </Route>
+
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>

@@ -11,3 +11,9 @@ wheels/
 
 # Local session store
 backend/aurea_sessions.db*
+
+# Local secrets
+backend/.env
+frontend/.env.local
+.neon
+.env.local

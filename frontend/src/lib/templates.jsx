@@ -1,5 +1,7 @@
-import { alpha, mix, onColor, shiftHue } from "./color";
+import { alpha, luminance, mix, onColor, shiftHue } from "./color";
+import { CUSTOM_PREFIX, customFontCss } from "./fonts";
 import { sizeOf } from "./formats";
+import { SLIDE_ICONS } from "./slideIcons";
 
 // Slides render at their native pixel size with inline styles only, so the
 // same markup drives the editor preview, the thumbnails, and the exported files.
@@ -147,13 +149,35 @@ function Arrow({ size, color }) {
   );
 }
 
-function BrandTag({ brand, u, fg, muted, accent }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 16 * u, minWidth: 0 }}>
+function BrandTag({ brand, u, fg, muted, accent, darkBg }) {
+  const size = 56 * u;
+  const useLogo = brand.mark === "logo" && brand.logo;
+  const useAvatar = brand.mark === "avatar" && brand.avatar;
+
+  let mark;
+  if (useLogo) {
+    mark = (
       <div
         style={{
-          width: 56 * u,
-          height: 56 * u,
+          display: "flex",
+          alignItems: "center",
+          padding: darkBg ? `${8 * u}px ${14 * u}px` : 0,
+          borderRadius: 14 * u,
+          background: darkBg ? "rgba(255,255,255,0.95)" : "transparent",
+          flexShrink: 0,
+        }}
+      >
+        <img src={brand.logo} alt="" style={{ display: "block", height: darkBg ? size - 16 * u : size, maxWidth: 240 * u, objectFit: "contain" }} />
+      </div>
+    );
+  } else if (useAvatar) {
+    mark = <img src={brand.avatar} alt="" style={{ width: size, height: size, borderRadius: 999, objectFit: "cover", flexShrink: 0, display: "block" }} />;
+  } else {
+    mark = (
+      <div
+        style={{
+          width: size,
+          height: size,
           borderRadius: 999,
           background: accent,
           color: onColor(accent),
@@ -168,28 +192,88 @@ function BrandTag({ brand, u, fg, muted, accent }) {
       >
         {initials(brand.name)}
       </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 16 * u, minWidth: 0 }}>
+      {mark}
       <div style={{ fontFamily: BODY_FONT, lineHeight: 1.2, minWidth: 0 }}>
-        <div style={{ fontSize: 24 * u, fontWeight: 650, color: fg }}>{brand.name}</div>
-        {brand.handle && <div style={{ fontSize: 21 * u, color: muted }}>{brand.handle}</div>}
+        {!useLogo && <div style={{ fontSize: 24 * u, fontWeight: 650, color: fg }}>{brand.name}</div>}
+        {brand.handle && <div style={{ fontSize: 21 * u, color: useLogo ? fg : muted, fontWeight: useLogo ? 600 : 400 }}>{brand.handle}</div>}
       </div>
     </div>
   );
 }
 
-export function SlideCanvas({ project, slide, index, brand }) {
+// Slide layouts. "standard" is headline and body; the others add structured content.
+export const LAYOUTS = {
+  standard: { label: "Text" },
+  stat: { label: "Stat" },
+  list: { label: "List" },
+  chart: { label: "Chart" },
+  code: { label: "Code" },
+  image: { label: "Screenshot" },
+  sources: { label: "Sources" },
+};
+
+const MONO = "ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
+
+function domainOf(url = "") {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function CheckBullet({ size, bg, fg }) {
+  return (
+    <span style={{ width: size, height: size, borderRadius: 999, background: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+      <svg width={size * 0.55} height={size * 0.55} viewBox="0 0 24 24" fill="none" stroke={fg} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M5 12l5 5L20 7" />
+      </svg>
+    </span>
+  );
+}
+
+const DESIGN_DEFAULTS = {
+  template: "midnight",
+  accent: "#ff5a3c",
+  font: "auto",
+  align: "left",
+  showBrand: true,
+  showNumbers: true,
+  showArrow: true,
+  showCta: true,
+};
+
+export function SlideCanvas({ project, slide: rawSlide, index, brand }) {
   const { w, h } = sizeOf(project);
-  const { design } = project;
+  // Projects come from the server as stored JSON; fill anything missing instead of crashing.
+  const design = { ...DESIGN_DEFAULTS, ...project.design, accent: /^#[0-9a-f]{6}$/i.test(project.design?.accent ?? "") ? project.design.accent : DESIGN_DEFAULTS.accent };
+  const slide = { kicker: "", headline: "", body: "", ...rawSlide };
   const u = Math.min(w, h) / 1080;
   const landscape = w > h;
   const tpl = TEMPLATES[design.template] ?? TEMPLATES.midnight;
-  const t = tpl.theme(design.accent);
-  const headFont = (FONTS[design.font] ?? FONTS[tpl.font]).css;
+  const photo = slide.bg?.src;
+  const layout = slide.layout ?? "standard";
 
-  const total = project.slides.length;
+  // A background photo turns any template into white text over a darkened image.
+  let t = tpl.theme(design.accent);
+  if (photo) {
+    t = { ...t, fg: "#ffffff", muted: "rgba(255,255,255,0.86)", highlight: design.accent, rule: false, grid: null, split: false, bigNumber: false, layers: null, bg: "#111111" };
+  }
+  const headFont = design.font?.startsWith(CUSTOM_PREFIX)
+    ? customFontCss(design.font.slice(CUSTOM_PREFIX.length))
+    : (FONTS[design.font] ?? FONTS[tpl.font]).css;
+
+  const total = project.slides?.length || 1;
   const multi = total > 1;
   const isLast = index === total - 1;
   const center = design.align === "center";
   const pad = (landscape ? 72 : 88) * u;
+  const layer = { position: "relative", zIndex: 1 };
 
   const showCta = design.showCta && isLast && project.cta;
   const showArrow = design.showArrow && multi && !isLast;
@@ -203,9 +287,16 @@ export function SlideCanvas({ project, slide, index, brand }) {
     const muted = onBlock ? alpha(blockFg, 0.72) : t.muted;
     if (!design.showBrand && !(design.showNumbers && multi)) return null;
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 * u }}>
+      <div style={{ ...layer, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 * u }}>
         {design.showBrand ? (
-          <BrandTag brand={brand} u={u} fg={fg} muted={muted} accent={onBlock || t.highlight === t.fg ? fg : design.accent} />
+          <BrandTag
+            brand={brand}
+            u={u}
+            fg={fg}
+            muted={muted}
+            accent={onBlock || t.highlight === t.fg ? fg : design.accent}
+            darkBg={onBlock ? onColor(design.accent) === "#ffffff" : luminance(t.fg) > 0.5}
+          />
         ) : (
           <span />
         )}
@@ -222,6 +313,7 @@ export function SlideCanvas({ project, slide, index, brand }) {
     showCta || showArrow ? (
       <div
         style={{
+          ...layer,
           display: "flex",
           alignItems: "center",
           justifyContent: showCta && center ? "center" : showCta ? "flex-start" : "flex-end",
@@ -251,45 +343,195 @@ export function SlideCanvas({ project, slide, index, brand }) {
       </div>
     ) : null;
 
-  const headlineSize = 92 * u * headlineScale(slide.headline, multi && index === 0) * (landscape ? 0.92 : 1);
-  const bodySize = 34 * u * (slide.body.length > 160 ? 0.86 : 1);
+  // ---- building blocks
+  const Icon = SLIDE_ICONS[slide.icon];
+  const iconEl = Icon && (
+    <div style={{ width: 92 * u, height: 92 * u, borderRadius: 24 * u, background: t.highlight, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <Icon size={50 * u} color={onColor(t.highlight)} strokeWidth={2} />
+    </div>
+  );
+
+  const kickerText = slide.kicker || (layout === "sources" ? "Sources" : "");
+  const kickerEl = kickerText && (
+    <div style={{ display: "flex", alignItems: "center", gap: 14 * u }}>
+      {!center && <span style={{ width: 36 * u, height: 5 * u, borderRadius: 9, background: t.highlight }} />}
+      <span style={{ fontFamily: BODY_FONT, fontSize: 23 * u, fontWeight: 650, letterSpacing: "0.14em", textTransform: "uppercase", color: t.highlight }}>
+        {kickerText}
+      </span>
+    </div>
+  );
+
+  const headlineEl = (scale = 1) =>
+    slide.headline && (
+      <div
+        style={{
+          fontFamily: headFont,
+          fontSize: 92 * u * headlineScale(slide.headline, multi && index === 0 && layout === "standard") * (landscape ? 0.92 : 1) * scale,
+          fontWeight: t.weight,
+          fontStyle: t.quote && layout === "standard" ? "italic" : "normal",
+          lineHeight: 1.06,
+          letterSpacing: t.quote || headFont.includes("Serif") ? "-0.01em" : "-0.03em",
+          color: t.fg,
+          whiteSpace: "pre-wrap",
+          overflowWrap: "break-word",
+          maxWidth: "100%",
+        }}
+      >
+        {slide.headline}
+      </div>
+    );
+
+  const bodyEl =
+    slide.body && (
+      <div style={{ fontFamily: BODY_FONT, fontSize: 34 * u * (slide.body.length > 160 ? 0.86 : 1), lineHeight: 1.45, color: t.muted, maxWidth: center ? "86%" : "90%", whiteSpace: "pre-wrap", overflowWrap: "break-word" }}>
+        {slide.body}
+      </div>
+    );
+
+  let blocks;
+  let fullWidth = false;
+  if (layout === "stat") {
+    const value = slide.stat?.value || "0";
+    blocks = [
+      iconEl,
+      kickerEl,
+      <div key="stat" style={{ fontFamily: headFont, fontSize: 250 * u * (value.length > 5 ? 5.5 / value.length : 1) * (landscape ? 0.8 : 1), fontWeight: 800, lineHeight: 0.92, letterSpacing: "-0.05em", color: t.highlight }}>
+        {value}
+      </div>,
+      headlineEl(0.55),
+      bodyEl,
+    ];
+  } else if (layout === "list") {
+    const items = (slide.items ?? []).filter(Boolean).slice(0, 6);
+    fullWidth = true;
+    blocks = [
+      iconEl,
+      kickerEl,
+      headlineEl(0.72),
+      items.length > 0 && (
+        <div key="list" style={{ display: "flex", flexDirection: "column", gap: 22 * u, width: "100%" }}>
+          {items.map((item, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 22 * u, justifyContent: center ? "center" : "flex-start" }}>
+              <CheckBullet size={44 * u} bg={t.highlight} fg={onColor(t.highlight)} />
+              <span style={{ fontFamily: BODY_FONT, fontSize: 34 * u * (items.length > 4 ? 0.9 : 1), lineHeight: 1.35, color: t.fg, paddingTop: 2 * u }}>{item}</span>
+            </div>
+          ))}
+        </div>
+      ),
+      bodyEl,
+    ];
+  } else if (layout === "chart") {
+    const rows = (slide.chart?.rows ?? []).filter((r) => r.label || r.value).slice(0, 6);
+    const max = Math.max(1, ...rows.map((r) => Math.abs(Number(r.value) || 0)));
+    fullWidth = true;
+    blocks = [
+      kickerEl,
+      headlineEl(0.66),
+      rows.length > 0 && (
+        <div key="chart" style={{ display: "flex", flexDirection: "column", gap: 20 * u, width: "100%" }}>
+          {rows.map((r, i) => {
+            const v = Number(r.value) || 0;
+            return (
+              <div key={i} style={{ display: "flex", flexDirection: "column", gap: 8 * u }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontFamily: BODY_FONT, fontSize: 26 * u }}>
+                  <span style={{ color: t.muted }}>{r.label}</span>
+                  <span style={{ color: t.fg, fontWeight: 700 }}>
+                    {r.value}
+                    {slide.chart?.suffix ?? ""}
+                  </span>
+                </div>
+                <div style={{ height: 40 * u, borderRadius: 12 * u, background: alpha(luminance(t.fg) > 0.5 ? "#ffffff" : "#000000", 0.1), overflow: "hidden" }}>
+                  <div style={{ width: `${Math.max(2, (Math.abs(v) / max) * 100)}%`, height: "100%", borderRadius: 12 * u, background: i === 0 ? t.highlight : alpha(t.highlight, 0.7) }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ),
+      bodyEl,
+    ];
+  } else if (layout === "code") {
+    const code = slide.code ?? "";
+    const lines = code.split("\n").length;
+    fullWidth = true;
+    blocks = [
+      kickerEl,
+      headlineEl(0.6),
+      code && (
+        <div key="code" style={{ width: "100%", background: "#0d1117", borderRadius: 22 * u, padding: 34 * u, boxSizing: "border-box", boxShadow: `0 ${20 * u}px ${50 * u}px rgba(0,0,0,0.25)` }}>
+          <div style={{ display: "flex", gap: 10 * u, marginBottom: 22 * u }}>
+            {["#ff5f57", "#febc2e", "#28c840"].map((c) => (
+              <span key={c} style={{ width: 16 * u, height: 16 * u, borderRadius: 999, background: c }} />
+            ))}
+          </div>
+          <pre style={{ margin: 0, fontFamily: MONO, fontSize: 26 * u * (lines > 14 ? 0.8 : 1), lineHeight: 1.5, color: "#e6edf3", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{code}</pre>
+        </div>
+      ),
+      bodyEl,
+    ];
+  } else if (layout === "image") {
+    fullWidth = true;
+    blocks = [
+      kickerEl,
+      headlineEl(0.66),
+      bodyEl,
+      slide.image && (
+        <img
+          key="shot"
+          src={slide.image}
+          alt=""
+          style={{ display: "block", width: "100%", maxHeight: h * (landscape ? 0.46 : 0.42), objectFit: "contain", borderRadius: 18 * u, boxShadow: `0 ${18 * u}px ${46 * u}px rgba(0,0,0,0.22)`, background: "#ffffff" }}
+        />
+      ),
+    ];
+  } else if (layout === "sources") {
+    const sources = (slide.sources?.length ? slide.sources : project.sources ?? []).slice(0, 6);
+    fullWidth = true;
+    blocks = [
+      kickerEl,
+      headlineEl(0.6),
+      <div key="src" style={{ display: "flex", flexDirection: "column", gap: 24 * u, width: "100%" }}>
+        {sources.map((src, i) => (
+          <div key={i} style={{ display: "flex", gap: 20 * u, alignItems: "baseline" }}>
+            <span style={{ fontFamily: BODY_FONT, fontSize: 24 * u, fontWeight: 700, color: t.highlight, minWidth: 36 * u }}>{i + 1}</span>
+            <span style={{ fontFamily: BODY_FONT, lineHeight: 1.3 }}>
+              <span style={{ display: "block", fontSize: 28 * u, color: t.fg }}>{src.title}</span>
+              <span style={{ display: "block", fontSize: 21 * u, color: t.muted }}>{domainOf(src.url)}</span>
+            </span>
+          </div>
+        ))}
+      </div>,
+    ];
+  } else {
+    blocks = [
+      t.quote && (
+        <div key="q" style={{ fontFamily: FONTS.dmserif.css, fontSize: 240 * u, lineHeight: 0.6, height: 110 * u, color: t.highlight }}>
+          &ldquo;
+        </div>
+      ),
+      iconEl,
+      kickerEl,
+      headlineEl(1),
+      bodyEl,
+    ];
+  }
 
   const content = (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: center ? "center" : "flex-start", textAlign: center ? "center" : "left", gap: 28 * u }}>
-      {t.quote && (
-        <div style={{ fontFamily: FONTS.dmserif.css, fontSize: 240 * u, lineHeight: 0.6, height: 110 * u, color: t.highlight }}>&ldquo;</div>
-      )}
-      {slide.kicker && (
-        <div style={{ display: "flex", alignItems: "center", gap: 14 * u }}>
-          {!center && <span style={{ width: 36 * u, height: 5 * u, borderRadius: 9, background: t.highlight }} />}
-          <span style={{ fontFamily: BODY_FONT, fontSize: 23 * u, fontWeight: 650, letterSpacing: "0.14em", textTransform: "uppercase", color: t.highlight }}>
-            {slide.kicker}
-          </span>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: center ? "center" : "flex-start",
+        textAlign: center ? "center" : "left",
+        gap: 28 * u,
+        width: fullWidth ? "100%" : undefined,
+      }}
+    >
+      {blocks.filter(Boolean).map((b, i) => (
+        <div key={i} style={{ display: "contents" }}>
+          {b}
         </div>
-      )}
-      {slide.headline && (
-        <div
-          style={{
-            fontFamily: headFont,
-            fontSize: headlineSize,
-            fontWeight: t.weight,
-            fontStyle: t.quote ? "italic" : "normal",
-            lineHeight: 1.06,
-            letterSpacing: t.quote || headFont.includes("Serif") ? "-0.01em" : "-0.03em",
-            color: t.fg,
-            whiteSpace: "pre-wrap",
-            overflowWrap: "break-word",
-            maxWidth: "100%",
-          }}
-        >
-          {slide.headline}
-        </div>
-      )}
-      {slide.body && (
-        <div style={{ fontFamily: BODY_FONT, fontSize: bodySize, lineHeight: 1.45, color: t.muted, maxWidth: center ? "86%" : "90%", whiteSpace: "pre-wrap", overflowWrap: "break-word" }}>
-          {slide.body}
-        </div>
-      )}
+      ))}
     </div>
   );
 
@@ -329,16 +571,23 @@ export function SlideCanvas({ project, slide, index, brand }) {
             {String(index + 1).padStart(2, "0")}
           </div>
         </div>
-        <div style={{ flex: 1, padding: pad, display: "flex", flexDirection: "column", justifyContent: "space-between", boxSizing: "border-box", gap: 32 * u }}>
-          <div style={{ flex: 1, display: "flex", alignItems: "center" }}>{content}</div>
+        <div style={{ flex: 1, padding: pad, display: "flex", flexDirection: "column", justifyContent: "space-between", boxSizing: "border-box", gap: 32 * u, minHeight: 0 }}>
+          <div style={{ flex: 1, display: "flex", alignItems: "center", minHeight: 0 }}>{content}</div>
           {footer}
         </div>
       </div>
     );
   }
 
+  const dim = slide.bg?.dim ?? 0.45;
   return (
     <div style={{ ...root, padding: pad, display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 32 * u }}>
+      {photo && (
+        <>
+          <img src={photo} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+          <div style={{ position: "absolute", inset: 0, background: `linear-gradient(to top, rgba(0,0,0,${Math.min(0.92, dim + 0.3)}), rgba(0,0,0,${dim}))` }} />
+        </>
+      )}
       {t.bigNumber && multi && (
         <div
           style={{
@@ -358,9 +607,7 @@ export function SlideCanvas({ project, slide, index, brand }) {
         </div>
       )}
       {header(false) ?? <span />}
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: center ? "center" : "flex-start", position: "relative" }}>
-        {content}
-      </div>
+      <div style={{ ...layer, flex: 1, display: "flex", alignItems: "center", justifyContent: center ? "center" : "flex-start", minHeight: 0 }}>{content}</div>
       {footer ?? <span />}
     </div>
   );

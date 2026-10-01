@@ -2,7 +2,9 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { getFontEmbedCSS, toJpeg, toPng } from "html-to-image";
 import { sizeOf } from "./formats";
+import { CUSTOM_PREFIX } from "./fonts";
 import { FONTS, SlideCanvas } from "./templates";
+import { formatHashtags } from "./text";
 
 // Renders slides off-screen at native size and rasterizes them, so exports
 // match the editor exactly (including anything the user edited).
@@ -17,8 +19,9 @@ function slugify(text) {
   );
 }
 
-async function loadFonts() {
+async function loadFonts(project) {
   const families = Object.values(FONTS).map((f) => f.css.split(",")[0]);
+  if (project.design.font?.startsWith(CUSTOM_PREFIX)) families.push(`'${project.design.font.slice(CUSTOM_PREFIX.length)}'`);
   await Promise.all(
     families.flatMap((family) => ["400", "700"].map((weight) => document.fonts.load(`${weight} 40px ${family}`).catch(() => {}))),
   );
@@ -43,7 +46,7 @@ async function rasterize(project, brand, indices, { pixelRatio = 1, type = "png"
         )),
       ),
     );
-    await loadFonts();
+    await loadFonts(project);
 
     const nodes = [...host.querySelectorAll("[data-slide]")];
     const fontEmbedCSS = await getFontEmbedCSS(nodes[0]);
@@ -85,18 +88,68 @@ export async function exportZip(project, brand) {
   download(URL.createObjectURL(blob), `${slugify(project.title)}.zip`);
 }
 
-export async function exportPdf(project, brand) {
+async function buildPdf(project, images, format) {
   const { jsPDF } = await import("jspdf");
   const { w, h } = sizeOf(project);
   const orientation = w > h ? "landscape" : "portrait";
-  const images = await rasterize(project, brand, project.slides.map((_, i) => i), { pixelRatio: 2, type: "jpeg" });
   const pdf = new jsPDF({ orientation, unit: "px", format: [w, h], hotfixes: ["px_scaling"], compress: true });
   images.forEach((img, i) => {
     if (i > 0) pdf.addPage([w, h], orientation);
-    pdf.addImage(img, "JPEG", 0, 0, w, h);
+    pdf.addImage(img, format, 0, 0, w, h);
   });
   pdf.setProperties({ title: project.title, creator: "Aurea Studio" });
-  pdf.save(`${slugify(project.title)}.pdf`);
+  return pdf;
+}
+
+export async function exportPdf(project, brand) {
+  const images = await rasterize(project, brand, project.slides.map((_, i) => i), { pixelRatio: 2, type: "jpeg" });
+  (await buildPdf(project, images, "JPEG")).save(`${slugify(project.title)}.pdf`);
+}
+
+// The caption for one platform: its own caption if written, otherwise the default one.
+export function captionFor(project, platform) {
+  const own = project.captions?.[platform];
+  const text = own?.caption?.trim() ? own.caption : project.caption ?? "";
+  const tags = own?.caption?.trim() ? own.hashtags ?? [] : project.hashtags ?? [];
+  return [text, formatHashtags(tags)].filter(Boolean).join("\n\n");
+}
+
+const BUNDLE_README = `Aurea export bundle
+
+linkedin/   Upload document.pdf as a document post (it shows as a swipeable carousel).
+            Paste caption.txt as the post text.
+instagram/  Add the PNGs in order as one carousel post. Paste caption.txt.
+x/          Attach up to 4 images to one post. post.txt is the text; thread.txt (if present) is a full thread.
+threads/    Attach the images and paste post.txt.
+`;
+
+// One ZIP laid out per platform: sized images, a PDF for LinkedIn, and each platform's caption.
+export async function exportBundle(project, brand) {
+  const { default: JSZip } = await import("jszip");
+  const images = await rasterize(project, brand, project.slides.map((_, i) => i));
+  const zip = new JSZip();
+  const name = slugify(project.title);
+  const addImages = (folder, list) =>
+    list.forEach((png, i) => zip.file(`${folder}/${name}-${pad(i + 1)}.png`, png.split(",")[1], { base64: true }));
+
+  const pdf = await buildPdf(project, images, "PNG");
+  zip.file("linkedin/document.pdf", pdf.output("arraybuffer"));
+  zip.file("linkedin/caption.txt", captionFor(project, "linkedin"));
+
+  addImages("instagram", images.slice(0, 20));
+  zip.file("instagram/caption.txt", captionFor(project, "instagram"));
+
+  addImages("x", images.slice(0, 4));
+  zip.file("x/post.txt", captionFor(project, "x"));
+  const thread = project.outputs?.x_thread?.posts;
+  if (thread?.length) zip.file("x/thread.txt", thread.map((p, i) => `${i + 1}/${thread.length}\n${p}`).join("\n\n"));
+
+  addImages("threads", images.slice(0, 10));
+  zip.file("threads/post.txt", captionFor(project, "threads"));
+
+  zip.file("README.txt", BUNDLE_README);
+  const blob = await zip.generateAsync({ type: "blob" });
+  download(URL.createObjectURL(blob), `${name}-bundle.zip`);
 }
 
 export async function copyPng(project, brand, index) {

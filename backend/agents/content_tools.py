@@ -6,6 +6,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field, create_model
 
 from llm import invoke_structured
+from text_rules import STYLE_RULE
 
 # Every string is length-bounded in the schema: constrained decoding limits the JSON
 # shape but not free text, and an unbounded string can make the model loop for minutes.
@@ -70,6 +71,10 @@ _FORMAT_INSTRUCTIONS = {
         "Write ONE single-image feed post (exactly {n} slide). The headline is the bold text "
         "overlaid on the image; the body is a short supporting line under 120 characters."
     ),
+    "thumbnail": (
+        "Write ONE YouTube thumbnail (exactly {n} slide). The headline is 2 to 5 huge, "
+        "curiosity-driven words; the body is an optional supporting line under 40 characters."
+    ),
     "card": (
         "Write ONE X/Twitter card (exactly {n} slide). The headline is the card title "
         "(under 70 characters); the body is the card description (under 200 characters). "
@@ -105,14 +110,19 @@ def generate_carousel_content(
         f"{format_instructions}\n\n"
         f"Key facts:\n{research_notes}\n\n"
         f"Brand and platform guidelines:\n{brand_notes}\n\n"
-        f"The slides array MUST contain exactly {slide_count} item(s), numbered from 1."
+        f"The slides array MUST contain exactly {slide_count} item(s), numbered from 1.\n"
+        f"{STYLE_RULE}"
     )
     result = invoke_structured(_carousel_schema_for(slide_count), prompt, temperature=0.4, max_tokens=1000)
     return _coerce_slide_count(CarouselContent(**result.model_dump()), slide_count)
 
 
-def _rule_issues(carousel: CarouselContent, char_limit: int) -> list[str]:
+def _rule_issues(carousel: CarouselContent, char_limit: int, avoid_words: list[str]) -> list[str]:
     issues = []
+    text = " ".join([s.headline + " " + s.body for s in carousel.slides] + [carousel.caption, carousel.cta]).lower()
+    used = [w for w in avoid_words if w.strip() and w.lower() in text]
+    if used:
+        issues.append("remove these words the creator never uses: " + ", ".join(used))
     for slide in carousel.slides:
         if not slide.headline.strip() or not slide.body.strip():
             issues.append(f"slide {slide.index} has an empty headline or body")
@@ -125,7 +135,7 @@ def _rule_issues(carousel: CarouselContent, char_limit: int) -> list[str]:
 
 @tool
 def validate_and_refine(
-    carousel: CarouselContent, brand_notes: str, slide_count: int, char_limit: int
+    carousel: CarouselContent, brand_notes: str, slide_count: int, char_limit: int, avoid_words: list[str] | None = None
 ) -> ValidationResult:
     """Check a carousel against the platform rules and rewrite it only if something is wrong.
 
@@ -134,8 +144,9 @@ def validate_and_refine(
         brand_notes: The brand and platform guidelines it must follow.
         slide_count: The exact number of slides the carousel must have.
         char_limit: Maximum characters allowed in a slide body.
+        avoid_words: Words or phrases the creator never wants to use.
     """
-    issues = _rule_issues(carousel, char_limit)
+    issues = _rule_issues(carousel, char_limit, avoid_words or [])
     if not issues:
         return ValidationResult(is_valid=True, issues=[])
 

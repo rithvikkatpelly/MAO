@@ -68,6 +68,11 @@ class AureaState(TypedDict):
     template: Annotated[str, _keep_last]
     slides_html: Annotated[list[str], _keep_last]
     errors: Annotated[list[str], _keep_last]
+    owner_id: Annotated[str, _keep_last]
+    kind: Annotated[str | None, _keep_last]  # carousel | poster | image | thumbnail
+    slide_count: Annotated[int | None, _keep_last]
+    sources: Annotated[list[dict], _keep_last]  # what deep research read, shown in the editor
+    brand_profile: Annotated[dict | None, _keep_last]  # the user's questionnaire answers, if any
 
 
 # ---- agent nodes --------------------------------------------------------
@@ -100,44 +105,71 @@ def await_idea_selection_node(state: AureaState) -> dict:
 def deep_research_node(state: AureaState) -> dict:
     """Deep Research Agent: top 5 sources for the selected idea, distilled into key facts."""
     idea = state["selected_idea"]
-    sources = search_sources_deep.invoke({"query": idea["title"]})
+    # The niche keeps searches on topic ("raise your rates" means pricing, not interest rates).
+    niche = ((state.get("brand_profile") or {}).get("voice") or {}).get("niche", "")
+    sources = search_sources_deep.invoke({"query": f"{idea['title']} {niche}".strip()})
     facts = extract_key_facts.invoke(
-        {"idea": f"{idea['title']} — {idea['angle']}", "sources_text": format_sources(sources)}
+        {"idea": f"{idea['title']}: {idea['angle']}", "sources_text": format_sources(sources)}
     )
-    return {"research_context": facts}
+    return {
+        "research_context": facts,
+        "sources": [{"title": s["title"], "url": s["url"], "date": s.get("date", "")} for s in sources],
+    }
 
 
 def brand_context_node(state: AureaState) -> dict:
-    """Brand/Context Agent: pull tone, audience, and platform guidelines."""
+    """Brand/Context Agent: the creator's voice, examples, and what worked, plus platform rules.
+
+    Signed-in runs carry the creator's brand kit and questionnaire answers in
+    state["brand_profile"]; the static profile in brand_tools is only a fallback
+    for command-line runs.
+    """
     platform = state["platform"]
+    profile = state.get("brand_profile") or {}
     return {
         "brand_context": {
-            "user_preferences": get_user_preferences.invoke({}),
+            "user_preferences": profile.get("voice") or get_user_preferences.invoke({}),
+            "words_to_avoid": profile.get("words_to_avoid", []),
+            "example_posts_in_their_voice": profile.get("example_posts", []),
+            "previous_content_that_performed": profile.get("previous_content")
+            if "previous_content" in profile
+            else get_previous_content.invoke({"platform": platform}),
             "platform_guidelines": get_platform_guidelines.invoke({"platform": platform}),
-            "brand_knowledge": search_brand_knowledge.invoke({"query": "tone audience call to action"}),
-            "previous_content": get_previous_content.invoke({"platform": platform}),
+            "writing_rules": search_brand_knowledge.invoke({"query": "hook call to action"}),
         }
     }
+
+
+_KIND_FORMATS = {"carousel": "carousel", "poster": "single", "image": "card", "thumbnail": "thumbnail"}
+
+
+def _output_spec(state: AureaState) -> tuple[int, str]:
+    """(slide count, format) for this run: the creator's choice, else the platform default."""
+    spec = get_platform_spec(state["platform"])
+    fmt = _KIND_FORMATS.get(state.get("kind") or "", spec["format"])
+    if fmt != "carousel":
+        return 1, fmt
+    return max(3, min(10, state.get("slide_count") or spec["slide_count"])), fmt
 
 
 def content_node(state: AureaState) -> dict:
     """Content Agent: generate structured, platform-shaped content, then validate it."""
     idea = state["selected_idea"]
-    spec = get_platform_spec(state["platform"])
+    slide_count, fmt = _output_spec(state)
     brand = state["brand_context"]
     brand_notes = (
-        f"Format requirements: exactly {spec['slide_count']} slide(s), format={spec['format']}.\n\n"
+        f"Format requirements: exactly {slide_count} slide(s), format={fmt}.\n\n"
         f"{json.dumps(brand, indent=2)}"
     )
 
     draft: CarouselContent = generate_carousel_content.invoke(
         {
-            "idea": f"{idea['title']} — {idea['angle']}",
+            "idea": f"{idea['title']}: {idea['angle']}",
             "research_notes": state["research_context"],
             "brand_notes": brand_notes,
             "platform": state["platform"],
-            "slide_count": spec["slide_count"],
-            "format_hint": spec["format"],
+            "slide_count": slide_count,
+            "format_hint": fmt,
         }
     )
 
@@ -145,8 +177,9 @@ def content_node(state: AureaState) -> dict:
         {
             "carousel": draft,
             "brand_notes": brand_notes,
-            "slide_count": spec["slide_count"],
+            "slide_count": slide_count,
             "char_limit": brand["platform_guidelines"]["char_limit_per_slide"],
+            "avoid_words": brand.get("words_to_avoid", []),
         }
     )
     final = review.revised if review.revised else draft
