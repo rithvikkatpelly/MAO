@@ -95,6 +95,13 @@ def brand_profile_for(user_id) -> dict | None:
     words to avoid, example posts, and the imported posts that performed best."""
     with connection() as conn:
         row = conn.execute("SELECT brand, social FROM profiles WHERE user_id = %s", (user_id,)).fetchone()
+        recent = conn.execute(
+            """
+            SELECT title, kind, data->>'textFormat' AS text_format, data->'slides'->0->>'headline' AS hook
+            FROM projects WHERE user_id = %s ORDER BY updated_at DESC LIMIT 15
+            """,
+            (user_id,),
+        ).fetchall()
         metrics = conn.execute(
             "SELECT data FROM user_items WHERE user_id = %s AND kind = 'metric' ORDER BY updated_at DESC LIMIT 500",
             (user_id,),
@@ -117,6 +124,10 @@ def brand_profile_for(user_id) -> dict | None:
         },
         "words_to_avoid": ["em dashes", "emojis", *social.get("avoid_words", [])],
         "example_posts": social.get("example_posts", []),
+        # What the creator already made, so new ideas and hooks do not repeat it.
+        "recent_posts": [
+            {"title": r["title"], "hook": r["hook"] or "", "format": r["text_format"] or r["kind"]} for r in recent if r["title"]
+        ],
         "previous_content": [
             {
                 "title": m.get("title", ""),

@@ -2,11 +2,12 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ChevronLeft, Copy, ExternalLink, Lightbulb, Loader2, Redo2, RefreshCw, Undo2 } from "lucide-react";
 import { ScheduleButton } from "../../components/editor/Checks";
+import HistoryButton from "../../components/editor/HistoryPanel";
 import RepurposePanel, { OutputEditor } from "../../components/editor/RepurposePanel";
 import SaveStatus from "../../components/editor/SaveStatus";
 import Sources from "../../components/editor/Sources";
 import { useToast } from "../../components/Toast";
-import { ai, projectForAI } from "../../lib/api";
+import { ai, projectForAI, versions } from "../../lib/api";
 import { useAutosave } from "../../lib/autosave";
 import { useProjectBrand } from "../../lib/brandkits";
 import { TEXT_FORMATS } from "../../lib/formats";
@@ -64,6 +65,7 @@ export default function TextEditor({ initial }) {
     try {
       await navigator.clipboard.writeText(outputToText(format, data));
       toast("Copied");
+      versions.create(project, "export", "Copied").catch(() => {});
     } catch {
       toast("Could not access the clipboard", { tone: "error" });
     }
@@ -108,6 +110,12 @@ export default function TextEditor({ initial }) {
         <button className="btn btn-ghost btn-icon" onClick={history.redo} disabled={!history.canRedo} title={`Redo (${MOD_KEY} Shift Z)`} aria-label="Redo">
           <Redo2 size={16} />
         </button>
+        <HistoryButton
+          project={project}
+          brand={brand}
+          onOpen={flush}
+          onRestore={(data) => set((p) => ({ ...data, id: p.id, createdAt: p.createdAt, updatedAt: p.updatedAt }))}
+        />
         <ScheduleButton project={project} onChange={update} />
         <button className="btn btn-accent" onClick={copy} disabled={!data}>
           <Copy size={15} /> <span className="hidden sm:inline">Copy</span>

@@ -56,3 +56,16 @@ CREATE TABLE IF NOT EXISTS user_items (
     PRIMARY KEY (user_id, kind, id)
 );
 CREATE INDEX IF NOT EXISTS user_items_kind_idx ON user_items (user_id, kind, updated_at DESC);
+
+-- Snapshots of a project: automatic while editing (at most one per 10 minutes),
+-- on export, named by the creator, and a safety copy before any restore.
+CREATE TABLE IF NOT EXISTS project_versions (
+    id         BIGSERIAL PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+    user_id    UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    reason     TEXT NOT NULL,
+    label      TEXT NOT NULL DEFAULT '',
+    data       JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS project_versions_project_idx ON project_versions (project_id, created_at DESC);

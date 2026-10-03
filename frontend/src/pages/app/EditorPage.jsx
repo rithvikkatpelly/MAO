@@ -28,6 +28,7 @@ import {
 import { Menu } from "../../components/Menu";
 import CaptionsPanel from "../../components/editor/CaptionsPanel";
 import { ChecklistButton, ScheduleButton } from "../../components/editor/Checks";
+import HistoryButton from "../../components/editor/HistoryPanel";
 import { BrandKitSelect, SavedTemplates } from "../../components/editor/DesignExtras";
 import LayoutFields from "../../components/editor/LayoutFields";
 import SaveStatus from "../../components/editor/SaveStatus";
@@ -37,6 +38,7 @@ import Sources from "../../components/editor/Sources";
 import { FitSlide, SlideFrame } from "../../components/SlideFrame";
 import { useToast } from "../../components/Toast";
 import { AutoTextarea, CharCount, ColorPicker, Segmented, Toggle } from "../../components/controls";
+import { versions } from "../../lib/api";
 import { useAutosave } from "../../lib/autosave";
 import { useBrandKits, useProjectBrand } from "../../lib/brandkits";
 import { copyPng, exportBundle, exportPdf, exportPng, exportZip } from "../../lib/export";
@@ -64,7 +66,7 @@ function useMediaQuery(query) {
 
 // ---- top bar ---------------------------------------------------------------
 
-function TopBar({ project, onTitle, onChange, saveState, history, exporting, onExport }) {
+function TopBar({ project, brand, onTitle, onChange, onRestore, onFlush, saveState, history, exporting, onExport }) {
   const kind = KINDS[project.kind] ?? KINDS.carousel;
   const size = sizeOf(project);
   const multi = project.slides.length > 1;
@@ -92,6 +94,7 @@ function TopBar({ project, onTitle, onChange, saveState, history, exporting, onE
       <div className="hidden md:block">
         <ChecklistButton project={project} />
       </div>
+      <HistoryButton project={project} brand={brand} onRestore={onRestore} onOpen={onFlush} />
       <ScheduleButton project={project} onChange={onChange} />
       <button className="btn btn-ghost btn-icon" onClick={history.undo} disabled={!history.canUndo} title={`Undo (${MOD_KEY} Z)`} aria-label="Undo">
         <Undo2 size={16} />
@@ -478,6 +481,8 @@ function PostPanel({ project, onChange, onAddSourcesSlide }) {
 
 // ---- editor ------------------------------------------------------------------
 
+const EXPORT_LABELS = { png: "PNG export", zip: "ZIP export", pdf: "PDF export", bundle: "Platform bundle export" };
+
 const TABS = [
   { value: "slide", label: "Slide" },
   { value: "design", label: "Design" },
@@ -578,6 +583,14 @@ function Editor({ initial }) {
     navigate(`/app/p/${thumb.id}`);
   }
 
+  const restoreVersion = useCallback(
+    (data) => {
+      set((p) => ({ ...data, id: p.id, createdAt: p.createdAt, updatedAt: p.updatedAt }));
+      setActive(0);
+    },
+    [set],
+  );
+
   // ---- export
   async function handleExport(type) {
     if (type === "caption") {
@@ -598,6 +611,7 @@ function Editor({ initial }) {
       else if (type === "copy") await copyPng(project, brand, index);
       else if (type === "bundle") await exportBundle(project, brand);
       toast(type === "copy" ? "Image copied to clipboard" : "Download started");
+      if (type !== "copy") versions.create(project, "export", EXPORT_LABELS[type]).catch(() => {});
     } catch (err) {
       console.error(err);
       toast(type === "copy" ? "Your browser blocked copying images. Try PNG export instead." : "Export failed. Please try again.", { tone: "error" });
@@ -654,6 +668,9 @@ function Editor({ initial }) {
     <div className="flex min-h-dvh flex-col bg-paper lg:h-dvh">
       <TopBar
         project={project}
+        brand={brand}
+        onRestore={restoreVersion}
+        onFlush={flush}
         onTitle={(title) => update({ title }, "title")}
         onChange={update}
         saveState={saveState}

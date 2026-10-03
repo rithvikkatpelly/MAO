@@ -81,11 +81,19 @@ class AureaState(TypedDict):
 def research_node(state: AureaState) -> dict:
     """Research Agent: search the top 5 sources, propose 3-5 ideas."""
     sources = search_sources.invoke({"query": state["user_request"]})
+    recent = (state.get("brand_profile") or {}).get("recent_posts", [])
+    covered = (
+        "\n\nThe creator already posted these. Propose new angles, not repeats:\n"
+        + "\n".join(f"- {p['title']}" for p in recent[:12])
+        if recent
+        else ""
+    )
 
     idea_list = invoke_structured(
         IdeaList,
         f"Topic: {state['user_request']}\n\nTop sources:\n{format_sources(sources)}\n\n"
-        f"Propose 3 to 5 distinct {state['platform']} content ideas grounded in these sources.",
+        f"Propose 3 to 5 distinct {state['platform']} content ideas grounded in these sources. "
+        f"Write each angle as plain prose; do not cite source numbers like [2].{covered}",
         temperature=0.5,
         max_tokens=800,
     )
@@ -134,6 +142,7 @@ def brand_context_node(state: AureaState) -> dict:
             "previous_content_that_performed": profile.get("previous_content")
             if "previous_content" in profile
             else get_previous_content.invoke({"platform": platform}),
+            "recent_posts_do_not_repeat": profile.get("recent_posts", []),
             "platform_guidelines": get_platform_guidelines.invoke({"platform": platform}),
             "writing_rules": search_brand_knowledge.invoke({"query": "hook call to action"}),
         }

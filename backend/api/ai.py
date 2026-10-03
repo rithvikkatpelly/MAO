@@ -55,6 +55,12 @@ def _voice(user_id) -> str:
         f"Tone: {v.get('tone', '') or 'clear and friendly'}. Audience: {v.get('audience', '') or 'their followers'}.",
         f"Never use: {', '.join(profile.get('words_to_avoid', ['em dashes', 'emojis']))}.",
     ]
+    recent = profile.get("recent_posts", [])
+    if recent:
+        lines.append(
+            "Already posted recently. Do not repeat these titles or hooks: "
+            + "; ".join(p["hook"] or p["title"] for p in recent[:10])
+        )
     examples = profile.get("example_posts", [])
     if examples:
         lines.append(

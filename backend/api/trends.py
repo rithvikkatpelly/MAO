@@ -66,12 +66,15 @@ def run_trend(user_id) -> list[dict]:
         raise HTTPException(400, "Add your niche in the brand kit, or a topic for trend watch, first.")
     try:
         sources = top_sources(f"{topic} latest news")
-        voice = (brand_profile_for(user_id) or {}).get("voice", {})
+        profile = brand_profile_for(user_id) or {}
+        voice = profile.get("voice", {})
+        covered = "; ".join(p["title"] for p in profile.get("recent_posts", [])[:12])
         ideas = invoke_structured(
             IdeaList,
             f"Niche: {topic}\nTone: {voice.get('tone', '')}. Audience: {voice.get('audience', '')}.\n\n"
             f"What is happening now:\n{format_sources(sources)}\n\n"
             "Propose 3 to 5 timely post ideas this creator could publish this week, grounded in these sources.\n"
+            + (f"They already posted: {covered}. Do not repeat those.\n" if covered else "")
             + STYLE_RULE,
             temperature=0.6,
             max_tokens=800,

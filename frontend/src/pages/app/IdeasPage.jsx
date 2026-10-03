@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Archive, ArchiveRestore, CalendarPlus, Lightbulb, Loader2, MoreHorizontal, Plus, Radar, Trash2, WandSparkles } from "lucide-react";
 import { Menu } from "../../components/Menu";
+import ResearchHistory from "../../components/ResearchHistory";
 import { Segmented, Toggle } from "../../components/controls";
 import { useToast } from "../../components/Toast";
 import { trendWatch } from "../../lib/api";
@@ -140,6 +141,7 @@ export default function IdeasPage() {
   const { status, items } = useItems("idea");
   const [filter, setFilter] = useState("new");
   const [source, setSource] = useState("all");
+  const [tab, setTab] = useState("backlog");
 
   const visible = useMemo(
     () => items.filter((i) => (i.status ?? "new") === filter && (source === "all" || i.source === source)),
@@ -156,87 +158,104 @@ export default function IdeasPage() {
         <p className="mt-1 text-sm text-muted">Your backlog: saved research angles, trend watch finds, week plans, and your own notes.</p>
       </div>
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_320px]">
-        <div className="space-y-4">
-          <AddIdea />
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="sm:w-72">
-              <Segmented size="sm" value={filter} onChange={setFilter} options={STATUS_FILTERS} />
+      <div className="mt-6 w-80">
+        <Segmented
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: "backlog", label: "Backlog" },
+            { value: "history", label: "Research history" },
+          ]}
+        />
+      </div>
+
+      {tab === "history" ? (
+        <div className="mt-6 max-w-3xl">
+          <ResearchHistory />
+        </div>
+      ) : (
+        <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_320px]">
+          <div className="space-y-4">
+            <AddIdea />
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="sm:w-72">
+                <Segmented size="sm" value={filter} onChange={setFilter} options={STATUS_FILTERS} />
+              </div>
+              {sources.length > 1 && (
+                <select className="input sm:w-48" value={source} onChange={(e) => setSource(e.target.value)} aria-label="Filter by source">
+                  <option value="all">All sources</option>
+                  {sources.map((s) => (
+                    <option key={s} value={s}>
+                      {SOURCE_LABELS[s] ?? s}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
-            {sources.length > 1 && (
-              <select className="input sm:w-48" value={source} onChange={(e) => setSource(e.target.value)} aria-label="Filter by source">
-                <option value="all">All sources</option>
-                {sources.map((s) => (
-                  <option key={s} value={s}>
-                    {SOURCE_LABELS[s] ?? s}
-                  </option>
+
+            {status === "loading" ? (
+              <div className="flex justify-center py-16 text-subtle">
+                <Loader2 size={20} className="animate-spin" />
+              </div>
+            ) : visible.length === 0 ? (
+              <div className="flex flex-col items-center rounded-2xl border border-dashed border-line bg-white/60 px-6 py-14 text-center">
+                <Lightbulb size={20} className="text-subtle" />
+                <p className="mt-3 text-sm font-medium text-ink">{filter === "new" ? "No ideas waiting" : "Nothing here yet"}</p>
+                <p className="mt-1 max-w-sm text-xs text-muted">Save angles you did not use when researching, turn on trend watch, or plan your week from the calendar.</p>
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {visible.map((idea) => (
+                  <li key={idea.id} className="card flex items-start gap-3 p-4">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-ink">{idea.title}</p>
+                      {idea.angle && <p className="mt-0.5 text-sm text-muted">{idea.angle}</p>}
+                      <p className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-subtle">
+                        <span className="rounded bg-paper px-1.5 py-0.5">{SOURCE_LABELS[idea.source] ?? idea.source}</span>
+                        {idea.planned_for && (
+                          <span className="rounded bg-accent/10 px-1.5 py-0.5 text-accent">
+                            Planned {new Date(`${idea.planned_for.slice(0, 10)}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+                          </span>
+                        )}
+                        <span>Added {relativeTime(idea.createdAt ?? idea.updatedAt)}</span>
+                      </p>
+                    </div>
+                    {filter !== "used" && (
+                      <button className="btn btn-secondary h-8 shrink-0 px-2.5 text-xs" onClick={() => navigate("/app/new", { state: { idea, kind: idea.kind && idea.kind !== "text" ? idea.kind : undefined } })}>
+                        <WandSparkles size={13} /> Create
+                      </button>
+                    )}
+                    <Menu
+                      width="w-52"
+                      trigger={({ toggle }) => (
+                        <button className="btn btn-ghost btn-icon shrink-0" onClick={toggle} aria-label="Idea actions">
+                          <MoreHorizontal size={16} />
+                        </button>
+                      )}
+                      items={[
+                        {
+                          label: "Plan for tomorrow",
+                          icon: CalendarPlus,
+                          onClick: () => update(idea, { planned_for: new Date(Date.now() + 86400000).toISOString().slice(0, 10) }),
+                        },
+                        idea.status === "archived"
+                          ? { label: "Restore", icon: ArchiveRestore, onClick: () => update(idea, { status: "new" }) }
+                          : { label: "Archive", icon: Archive, onClick: () => update(idea, { status: "archived" }) },
+                        "divider",
+                        { label: "Delete", icon: Trash2, danger: true, onClick: () => deleteItem("idea", idea.id).catch((err) => toast(err.message, { tone: "error" })) },
+                      ]}
+                    />
+                  </li>
                 ))}
-              </select>
+              </ul>
             )}
           </div>
 
-          {status === "loading" ? (
-            <div className="flex justify-center py-16 text-subtle">
-              <Loader2 size={20} className="animate-spin" />
-            </div>
-          ) : visible.length === 0 ? (
-            <div className="flex flex-col items-center rounded-2xl border border-dashed border-line bg-white/60 px-6 py-14 text-center">
-              <Lightbulb size={20} className="text-subtle" />
-              <p className="mt-3 text-sm font-medium text-ink">{filter === "new" ? "No ideas waiting" : "Nothing here yet"}</p>
-              <p className="mt-1 max-w-sm text-xs text-muted">Save angles you did not use when researching, turn on trend watch, or plan your week from the calendar.</p>
-            </div>
-          ) : (
-            <ul className="space-y-2">
-              {visible.map((idea) => (
-                <li key={idea.id} className="card flex items-start gap-3 p-4">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-ink">{idea.title}</p>
-                    {idea.angle && <p className="mt-0.5 text-sm text-muted">{idea.angle}</p>}
-                    <p className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-subtle">
-                      <span className="rounded bg-paper px-1.5 py-0.5">{SOURCE_LABELS[idea.source] ?? idea.source}</span>
-                      {idea.planned_for && (
-                        <span className="rounded bg-accent/10 px-1.5 py-0.5 text-accent">
-                          Planned {new Date(`${idea.planned_for.slice(0, 10)}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
-                        </span>
-                      )}
-                      <span>Added {relativeTime(idea.createdAt ?? idea.updatedAt)}</span>
-                    </p>
-                  </div>
-                  {filter !== "used" && (
-                    <button className="btn btn-secondary h-8 shrink-0 px-2.5 text-xs" onClick={() => navigate("/app/new", { state: { idea, kind: idea.kind && idea.kind !== "text" ? idea.kind : undefined } })}>
-                      <WandSparkles size={13} /> Create
-                    </button>
-                  )}
-                  <Menu
-                    width="w-52"
-                    trigger={({ toggle }) => (
-                      <button className="btn btn-ghost btn-icon shrink-0" onClick={toggle} aria-label="Idea actions">
-                        <MoreHorizontal size={16} />
-                      </button>
-                    )}
-                    items={[
-                      {
-                        label: "Plan for tomorrow",
-                        icon: CalendarPlus,
-                        onClick: () => update(idea, { planned_for: new Date(Date.now() + 86400000).toISOString().slice(0, 10) }),
-                      },
-                      idea.status === "archived"
-                        ? { label: "Restore", icon: ArchiveRestore, onClick: () => update(idea, { status: "new" }) }
-                        : { label: "Archive", icon: Archive, onClick: () => update(idea, { status: "archived" }) },
-                      "divider",
-                      { label: "Delete", icon: Trash2, danger: true, onClick: () => deleteItem("idea", idea.id).catch((err) => toast(err.message, { tone: "error" })) },
-                    ]}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
+          <aside className="space-y-4">
+            <TrendWatch />
+          </aside>
         </div>
-
-        <aside className="space-y-4">
-          <TrendWatch />
-        </aside>
-      </div>
+      )}
     </div>
   );
 }

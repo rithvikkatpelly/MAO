@@ -86,6 +86,30 @@ class Metric(BaseModel):
     clicks: int = Field(default=0, ge=0)
 
 
+class ResearchIdea(BaseModel):
+    title: Short
+    angle: Text = ""
+    reason: Text = ""
+
+
+class ResearchSource(BaseModel):
+    title: Annotated[str, StringConstraints(max_length=300)] = ""
+    url: Annotated[str, StringConstraints(max_length=600)] = ""
+    date: Annotated[str, StringConstraints(max_length=40)] = ""
+
+
+class ResearchRun(BaseModel):
+    """One research run, logged by the server: what was asked, suggested, and picked."""
+
+    topic: Text
+    platform: Short = ""
+    kind: Short = ""
+    origin: Literal["research", "idea"] = "research"
+    ideas: list[ResearchIdea] = Field(default_factory=list, max_length=5)
+    picked: Short = ""
+    sources: list[ResearchSource] = Field(default_factory=list, max_length=10)
+
+
 # kind -> (model, max items, max bytes per item)
 KINDS: dict[str, tuple[type[BaseModel], int, int]] = {
     "idea": (Idea, 1000, 10_000),
@@ -94,7 +118,29 @@ KINDS: dict[str, tuple[type[BaseModel], int, int]] = {
     "preset": (Preset, 100, 50_000),
     "font": (Font, 12, 3_100_000),
     "metric": (Metric, 5000, 5_000),
+    "research": (ResearchRun, 2000, 40_000),
 }
+
+
+def log_research(user_id, thread_id: str, **fields) -> None:
+    """Record a research run. Never lets logging break the pipeline."""
+    try:
+        _upsert_many(user_id, "research", [(thread_id, _validate("research", fields))])
+    except Exception:
+        pass
+
+
+def log_pick(user_id, thread_id: str, picked: str, sources: list[dict]) -> None:
+    """Mark which idea from a research run was turned into a post, with its sources."""
+    try:
+        patch = {"picked": picked[:120], "sources": [ResearchSource(**s).model_dump() for s in sources[:10]]}
+        with connection() as conn:
+            conn.execute(
+                "UPDATE user_items SET data = data || %s, updated_at = now() WHERE user_id = %s AND kind = 'research' AND id = %s",
+                (Jsonb(patch), user_id, thread_id),
+            )
+    except Exception:
+        pass
 
 
 def _spec(kind: str):

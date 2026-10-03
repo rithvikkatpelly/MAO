@@ -68,6 +68,16 @@ export const ai = {
   planWeek: (body) => api("/api/ai/plan-week", { method: "POST", body }),
 };
 
+// Saved snapshots of a project (backend/api/projects.py).
+export const versions = {
+  list: (projectId) => api(`/api/projects/${projectId}/versions`),
+  get: (projectId, versionId) => api(`/api/projects/${projectId}/versions/${versionId}`),
+  create: (project, reason, label = "") => {
+    const { id, createdAt: _c, updatedAt: _u, ...data } = project;
+    return api(`/api/projects/${id}/versions`, { method: "POST", body: { reason, label, data } });
+  },
+};
+
 export const trendWatch = {
   get: () => api("/api/trends/settings"),
   save: (settings) => api("/api/trends/settings", { method: "PUT", body: settings }),

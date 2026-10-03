@@ -38,6 +38,11 @@ Accounts use Google sign-in and all user data lives in PostgreSQL.
 - "Open in X, LinkedIn, or Threads" with the post text filled in
 - Insights: import post analytics from a CSV or log results by hand; top posts feed back into the writing agent
 
+**History and memory**
+- Version history for every project: automatic snapshots while editing (at most one every 10 minutes), on every export, and named versions; preview and restore, with undo
+- Research history: every topic researched, the ideas it suggested, which one became a post, and its sources
+- The AI remembers your recent projects and avoids repeating their angles and hooks in research, writing, and planning
+
 **House style:** generated copy never contains em dashes or emojis. Prompts ask for it, and
 both the backend (`backend/text_rules.py`) and the frontend (`frontend/src/lib/text.js`)
 clean anything that slips through. The editor flags any typed by hand.
@@ -73,7 +78,7 @@ flowchart TD
     FE -->|renders slides in the browser| EXPORT[PNG, ZIP, PDF, platform bundle]
 
     LLM[("Ollama qwen3:8b")] -.-> ORCH & AI
-    PG[("PostgreSQL<br/>users, profiles, projects, items")] -.-> AUTH & DATA & BR
+    PG[("PostgreSQL<br/>users, profiles, projects, versions, items")] -.-> AUTH & DATA & BR
     CK[("SQLite checkpoints<br/>backend/aurea_sessions.db")] -.-> ORCH
     TW["Trend watch scheduler<br/>backend/api/trends.py"] -.->|adds ideas| PG
 ```
@@ -84,8 +89,9 @@ flowchart TD
 - **Parallel agents.** After the creator picks an idea, deep research and brand context run
   in parallel, then join before the content agent writes.
 - **Your voice in every call.** `brand_profile_for()` in `backend/api/profile.py` builds the
-  creator's voice, words to avoid, example posts, and top-performing posts from Postgres,
-  and every pipeline run and AI helper call receives it.
+  creator's voice, words to avoid, example posts, top-performing posts, and recent projects
+  (so ideas and hooks are not repeated) from Postgres, and every pipeline run and AI helper
+  call receives it.
 - **Schema-constrained output.** Slide count and idea count are enforced through each
   call's JSON schema (`min_length`/`max_length`), not just the prompt.
 
@@ -100,6 +106,19 @@ flowchart TD
 
 Any visual project can switch size or add slides in the editor. Text formats (threads,
 posts, scripts) are written from a researched draft, so they keep the same facts and sources.
+
+### Database
+
+Six PostgreSQL tables, created on startup from `backend/schema.sql`:
+
+| Table | Stores |
+|-------|--------|
+| `users` | Google accounts |
+| `sessions` | sign-in sessions (only a hash of each token) |
+| `profiles` | brand kit, voice and questionnaire answers, trend watch settings |
+| `projects` | every visual and text project as JSON |
+| `project_versions` | version history snapshots (up to 50 per project) |
+| `user_items` | ideas, series, extra brand kits, saved designs, fonts, metrics, and research runs, by `kind` |
 
 ## Tech stack
 
@@ -124,8 +143,8 @@ backend/
   api/
     auth.py              Google sign-in, cookie sessions, dev login
     profile.py           brand kit, questionnaire answers, brand_profile_for()
-    projects.py          per-user projects
-    items.py             ideas, series, brand kits, saved designs, fonts, metrics
+    projects.py          per-user projects and version history
+    items.py             ideas, series, brand kits, saved designs, fonts, metrics, research log
     ai.py                slide actions, repurpose, platform captions, week plan
     trends.py            trend watch settings, run now, background scheduler
   agents/
@@ -146,11 +165,11 @@ frontend/src/
       EditorPage.jsx     slide editor: rail, canvas, Slide, Design, Post, Repurpose tabs
       TextEditor.jsx     editor for threads, posts, scripts, and other text formats
       CalendarPage.jsx   calendar, series, plan my week
-      IdeasPage.jsx      ideas backlog and trend watch
+      IdeasPage.jsx      ideas backlog, research history, and trend watch
       InsightsPage.jsx   analytics import and results
       BrandPage.jsx      brand kits, voice, fonts
   components/
-    editor/              AI actions, layout fields, captions, repurpose, checklist, schedule
+    editor/              AI actions, layout fields, captions, repurpose, checklist, schedule, history
     AppShell, Protected, SlideFrame, SlideStack, brand, controls, Menu, Popover, Toast
   lib/
     templates.jsx        8 templates and slide layouts (one renderer for preview and export)
@@ -223,6 +242,8 @@ require a signed-in session cookie.
 | POST | `/api/auth/logout` | | clears the session |
 | PUT  | `/api/profile` | `{ brand?, social?, onboarded? }` | saves the brand kit and voice |
 | GET, PUT, DELETE | `/api/projects[/{id}]` | project document | the creator's projects |
+| GET, POST | `/api/projects/{id}/versions` | `{ reason, label, data }` | list or save versions |
+| GET  | `/api/projects/{id}/versions/{version_id}` | | one version with its full project data |
 | POST | `/api/carousel/start` | `{ topic, platform, kind?, slide_count? }` | SSE stream, then `{ thread_id, ideas[] }` |
 | POST | `/api/carousel/from-idea` | `{ idea, topic, platform, kind?, slide_count? }` | `{ thread_id, ideas: [idea] }`; skips research |
 | POST | `/api/carousel/select` | `{ thread_id, idea_index }` | SSE stream, then `{ slides[], caption, hashtags[], cta, template, sources[] }` |
@@ -230,7 +251,7 @@ require a signed-in session cookie.
 | POST | `/api/ai/repurpose` | `{ format, project }` | the post in another format |
 | POST | `/api/ai/captions` | `{ platforms[], project }` | a caption and hashtags per platform |
 | POST | `/api/ai/plan-week` | `{ start, days, posts, notes? }` | dated post ideas |
-| GET, PUT, DELETE | `/api/items/{kind}[/{id}]` | per kind | ideas, series, brand kits, saved designs, fonts, metrics |
+| GET, PUT, DELETE | `/api/items/{kind}[/{id}]` | per kind | ideas, series, brand kits, saved designs, fonts, metrics, research runs |
 | POST | `/api/items/{kind}/bulk` | `{ items[] }` | bulk create or update (CSV imports, week plans) |
 | GET, PUT | `/api/trends/settings` | `{ enabled, frequency, topic }` | trend watch settings |
 | POST | `/api/trends/run` | | runs trend watch now, returns new ideas |

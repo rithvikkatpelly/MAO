@@ -18,6 +18,8 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 ProjectId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9-]{8,64}$")]
 MAX_PROJECT_BYTES = 8_000_000  # slides can carry photos and screenshots
+AUTO_VERSION_EVERY = "10 minutes"
+VERSIONS_KEPT = 50
 
 
 class ProjectIn(BaseModel, extra="allow"):
@@ -76,7 +78,7 @@ async def save_project(project_id: ProjectId, request: Request, user: dict = Dep
 
 def _upsert(project_id: str, user_id, project: ProjectIn, data: dict) -> dict | None:
     with connection() as conn:
-        return conn.execute(
+        row = conn.execute(
             """
             INSERT INTO projects (id, user_id, title, kind, data)
             VALUES (%(id)s, %(user_id)s, %(title)s, %(kind)s, %(data)s)
@@ -87,6 +89,95 @@ def _upsert(project_id: str, user_id, project: ProjectIn, data: dict) -> dict | 
             """,
             {"id": project_id, "user_id": user_id, "title": project.title, "kind": project.kind, "data": Jsonb(data)},
         ).fetchone()
+        if row:
+            _snapshot(conn, project_id, user_id, data, "auto", only_if_quiet=True)
+        return row
+
+
+def _snapshot(conn, project_id: str, user_id, data: dict, reason: str, label: str = "", only_if_quiet: bool = False) -> None:
+    """Store a version. Automatic ones are skipped if another was taken recently."""
+    quiet = f"AND NOT EXISTS (SELECT 1 FROM project_versions WHERE project_id = %(id)s AND created_at > now() - interval '{AUTO_VERSION_EVERY}')" if only_if_quiet else ""
+    cur = conn.execute(
+        f"""
+        INSERT INTO project_versions (project_id, user_id, reason, label, data)
+        SELECT %(id)s, %(user_id)s, %(reason)s, %(label)s, %(data)s WHERE TRUE {quiet}
+        """,
+        {"id": project_id, "user_id": user_id, "reason": reason, "label": label, "data": Jsonb(data)},
+    )
+    if cur.rowcount:
+        conn.execute(
+            """
+            DELETE FROM project_versions WHERE id IN (
+                SELECT id FROM project_versions WHERE project_id = %s ORDER BY created_at DESC OFFSET %s
+            )
+            """,
+            (project_id, VERSIONS_KEPT),
+        )
+
+
+# ---- version history ----------------------------------------------------------------
+
+
+@router.get("/{project_id}/versions")
+def list_versions(project_id: ProjectId, user: dict = Depends(current_user)):
+    with connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, reason, label, created_at, data->>'title' AS title,
+                   COALESCE(jsonb_array_length(data->'slides'), 0) AS slides
+            FROM project_versions WHERE project_id = %s AND user_id = %s
+            ORDER BY created_at DESC
+            """,
+            (project_id, user["id"]),
+        ).fetchall()
+    return [
+        {"id": str(r["id"]), "reason": r["reason"], "label": r["label"], "title": r["title"], "slides": r["slides"], "createdAt": r["created_at"].isoformat()}
+        for r in rows
+    ]
+
+
+@router.get("/{project_id}/versions/{version_id}")
+def get_version(project_id: ProjectId, version_id: int, user: dict = Depends(current_user)):
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT id, reason, label, created_at, data FROM project_versions WHERE id = %s AND project_id = %s AND user_id = %s",
+            (version_id, project_id, user["id"]),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Version not found.")
+    return {"id": str(row["id"]), "reason": row["reason"], "label": row["label"], "createdAt": row["created_at"].isoformat(), "data": row["data"]}
+
+
+class VersionIn(BaseModel):
+    reason: Literal["manual", "export", "restore"]
+    label: Annotated[str, StringConstraints(max_length=80)] = ""
+
+
+@router.post("/{project_id}/versions")
+async def create_version(project_id: ProjectId, request: Request, user: dict = Depends(current_user)):
+    """Snapshot the project as the client has it now (named, on export, or before a restore)."""
+    raw = await request.body()
+    if len(raw) > MAX_PROJECT_BYTES:
+        raise HTTPException(413, "This project is too large to save.")
+    body = await request.json()
+    try:
+        meta = VersionIn.model_validate(body)
+        project = ProjectIn.model_validate(body.get("data") or {})
+    except ValidationError as exc:
+        raise HTTPException(422, exc.errors(include_url=False, include_context=False, include_input=False)) from None
+    data = project.model_dump()
+    for key in ("id", "createdAt", "updatedAt"):
+        data.pop(key, None)
+
+    def save():
+        with connection() as conn:
+            owned = conn.execute("SELECT 1 FROM projects WHERE id = %s AND user_id = %s", (project_id, user["id"])).fetchone()
+            if not owned:
+                raise HTTPException(404, "Project not found.")
+            _snapshot(conn, project_id, user["id"], data, meta.reason, meta.label)
+
+    await run_in_threadpool(save)
+    return {"ok": True}
 
 
 @router.delete("/{project_id}")

@@ -18,6 +18,7 @@ import settings  # loads backend/.env before anything reads the environment
 from agents.orchestrator import AureaState, aurea_graph
 from api import ai, auth, items, profile, projects, trends
 from api.auth import current_user
+from api.items import log_pick, log_research
 from db import close_db, db_status, init_db
 from runtime import pipeline_lock
 from llm import MODEL_NAME, get_llm
@@ -240,6 +241,7 @@ def start_carousel(req: StartCarouselRequest, user: dict = Depends(current_user)
     thread_id = str(uuid.uuid4())
 
     def build_result(state: dict) -> dict:
+        log_research(user["id"], thread_id, topic=req.topic, platform=state["platform"], kind=req.kind or "", origin="research", ideas=state["ideas"])
         return StartCarouselResponse(
             thread_id=thread_id, platform=state["platform"], ideas=state["ideas"]
         ).model_dump()
@@ -271,6 +273,7 @@ def start_from_idea(req: FromIdeaRequest, user: dict = Depends(current_user)):
     thread_id = str(uuid.uuid4())
     aurea_graph.update_state(_config(thread_id), state, as_node="research")
     aurea_graph.invoke(None, config=_config(thread_id))
+    log_research(user["id"], thread_id, topic=state["user_request"], platform=state["platform"], kind=req.kind or "", origin="idea", ideas=state["ideas"])
     return StartCarouselResponse(thread_id=thread_id, platform=state["platform"], ideas=state["ideas"])
 
 
@@ -282,6 +285,7 @@ def select_idea(req: SelectIdeaRequest, user: dict = Depends(current_user)):
 
     def build_result(state: dict) -> dict:
         carousel = state["carousel"]
+        log_pick(user["id"], req.thread_id, (state.get("selected_idea") or {}).get("title", ""), state.get("sources") or [])
         return SelectIdeaResponse(
             thread_id=req.thread_id,
             platform=state["platform"],
