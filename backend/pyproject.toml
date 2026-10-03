@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "cryptography>=46",
     "ddgs>=9.16.0",
     "fastapi>=0.141.1",
     "google-auth>=2.59.0",

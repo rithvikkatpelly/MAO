@@ -35,8 +35,9 @@ Accounts use Google sign-in and all user data lives in PostgreSQL.
 
 **Publish and learn**
 - Export a PNG, a ZIP of every slide, a PDF for LinkedIn document posts, or a platform bundle with images and captions for each platform
+- Post straight to Instagram: connect a Business or Creator account, then publish a single image or a carousel of up to 10 slides from the editor, with an editable caption and checks for size, caption length, and hashtags
 - "Open in X, LinkedIn, or Threads" with the post text filled in
-- Insights: import post analytics from a CSV or log results by hand; top posts feed back into the writing agent
+- Insights: import post analytics from a CSV or log results by hand (posts published to Instagram are logged automatically); top posts feed back into the writing agent
 
 **History and memory**
 - Version history for every project: automatic snapshots while editing (at most one every 10 minutes), on every export, and named versions; preview and restore, with undo
@@ -56,6 +57,9 @@ flowchart TD
     FE -->|topic, kind, slide count| API["FastAPI<br/>backend/main.py"]
     FE -->|rewrite, repurpose, captions, week plan| AI["/api/ai"]
     FE -->|projects, ideas, series, kits, fonts, metrics| DATA["/api/projects<br/>/api/items"]
+    FE -->|connect, slide JPEGs, caption| IGAPI["/api/instagram"]
+    IGAPI -->|OAuth, containers, publish| IG[("Instagram Graph API")]
+    IG -.->|downloads staged images| IGAPI
 
     subgraph ORCH["LangGraph orchestrator: backend/agents/orchestrator.py"]
         direction TB
@@ -109,7 +113,7 @@ posts, scripts) are written from a researched draft, so they keep the same facts
 
 ### Database
 
-Six PostgreSQL tables, created on startup from `backend/schema.sql`:
+Eight PostgreSQL tables, created on startup from `backend/schema.sql`:
 
 | Table | Stores |
 |-------|--------|
@@ -119,6 +123,8 @@ Six PostgreSQL tables, created on startup from `backend/schema.sql`:
 | `projects` | every visual and text project as JSON |
 | `project_versions` | version history snapshots (up to 50 per project) |
 | `user_items` | ideas, series, extra brand kits, saved designs, fonts, metrics, and research runs, by `kind` |
+| `social_accounts` | connected Instagram accounts (access tokens encrypted with `SECRET_KEY`) |
+| `publish_media` | slide images staged for Instagram to download, deleted after posting or within a day |
 
 ## Tech stack
 
@@ -147,6 +153,7 @@ backend/
     items.py             ideas, series, brand kits, saved designs, fonts, metrics, research log
     ai.py                slide actions, repurpose, platform captions, week plan
     trends.py            trend watch settings, run now, background scheduler
+    instagram.py         Instagram connect (OAuth), image staging, and publishing
   agents/
     orchestrator.py      graph state, the 5 agent nodes, and wiring
     research_tools.py, deep_research_tools.py, _web.py   web and news search
@@ -168,8 +175,9 @@ frontend/src/
       IdeasPage.jsx      ideas backlog, research history, and trend watch
       InsightsPage.jsx   analytics import and results
       BrandPage.jsx      brand kits, voice, fonts
+      ConnectionsPage.jsx  connect and disconnect social accounts
   components/
-    editor/              AI actions, layout fields, captions, repurpose, checklist, schedule, history
+    editor/              AI actions, layout fields, captions, repurpose, checklist, schedule, history, Instagram publish
     AppShell, Protected, SlideFrame, SlideStack, brand, controls, Menu, Popover, Toast
   lib/
     templates.jsx        8 templates and slide layouts (one renderer for preview and export)
@@ -177,10 +185,12 @@ frontend/src/
     api.js, sse.js       backend client and pipeline progress stream
     auth.js, storage.js, items.js, brandkits.js, fonts.js   app data
     quality.js           hook score and pre-publish checklist
+    instagram.js         Instagram limits and connect helpers
     text.js, palette.js, image.js, csv.js, outputs.js       helpers
 
 docs/
   setup.md               Google sign-in and database setup (free options included)
+  instagram.md           Meta app, public tunnel, and settings for Instagram publishing
 ```
 
 ## Getting started
@@ -206,6 +216,13 @@ cp backend/.env.example backend/.env   # then fill in DATABASE_URL and GOOGLE_CL
 | `ALLOWED_ORIGINS`  | Comma-separated app origins allowed to call the API with cookies. |
 | `COOKIE_SECURE`, `COOKIE_SAMESITE` | Session cookie settings; use `true` and `lax` behind HTTPS. |
 | `DEV_LOGIN`        | Local development only: adds "Continue as local developer". Never enable in production. |
+| `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET` | Optional. From the Meta app's Instagram API setup; enables Instagram publishing. |
+| `PUBLIC_API_URL`   | Optional. Public HTTPS address of the API (a tunnel in development); Instagram redirects here and downloads images from here. |
+| `APP_URL`          | Where the web app runs, for returning after connecting an account. Defaults to the first `ALLOWED_ORIGINS` entry. |
+| `SECRET_KEY`       | Encrypts connected account tokens and signs OAuth state. Required for Instagram. |
+
+Instagram publishing needs a Meta app and a public tunnel to the API, even locally.
+Follow **[docs/instagram.md](docs/instagram.md)**.
 
 ### Run
 

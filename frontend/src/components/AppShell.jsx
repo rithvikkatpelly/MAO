@@ -1,5 +1,5 @@
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { ArrowUpRight, CalendarDays, ChartColumn, ChevronsUpDown, ClipboardList, LayoutGrid, Lightbulb, LogOut, Palette, Plus, Sparkles } from "lucide-react";
+import { ArrowUpRight, CalendarDays, ChartColumn, ChevronsUpDown, ClipboardList, LayoutGrid, Lightbulb, Link2, LogOut, Palette, Plus, Sparkles } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useEngineStatus } from "../lib/engine";
 import { Menu } from "./Menu";
@@ -11,6 +11,7 @@ const NAV = [
   { to: "/app/ideas", label: "Ideas", icon: Lightbulb },
   { to: "/app/insights", label: "Insights", icon: ChartColumn },
   { to: "/app/brand", label: "Brand kit", icon: Palette },
+  { to: "/app/connections", label: "Connections", icon: Link2 },
 ];
 
 export function Logo({ to = "/app" }) {
@@ -95,6 +96,7 @@ function AccountMenu({ compact = false }) {
       }
       items={[
         { label: "Brand kit", icon: Palette, onClick: () => navigate("/app/brand") },
+        { label: "Connections", icon: Link2, onClick: () => navigate("/app/connections") },
         { label: "Update questionnaire", icon: ClipboardList, onClick: () => navigate("/onboarding") },
         "divider",
         { label: "Sign out", icon: LogOut, onClick: () => navigate("/signout") },

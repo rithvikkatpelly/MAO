@@ -69,3 +69,28 @@ CREATE TABLE IF NOT EXISTS project_versions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS project_versions_project_idx ON project_versions (project_id, created_at DESC);
+
+-- Connected social accounts, one per platform per user. access_token is encrypted
+-- with SECRET_KEY (api/instagram.py); profile holds display details (picture, account type).
+CREATE TABLE IF NOT EXISTS social_accounts (
+    user_id          UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    platform         TEXT NOT NULL,
+    account_id       TEXT NOT NULL,
+    username         TEXT NOT NULL DEFAULT '',
+    profile          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    access_token     TEXT NOT NULL,
+    token_expires_at TIMESTAMPTZ,
+    connected_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, platform)
+);
+
+-- Images staged for publishing. Instagram fetches post media from a public URL, so each
+-- upload gets an unguessable token and is deleted after publishing (or within a day).
+CREATE TABLE IF NOT EXISTS publish_media (
+    token      TEXT PRIMARY KEY,
+    user_id    UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    data       BYTEA NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS publish_media_created_idx ON publish_media (created_at);

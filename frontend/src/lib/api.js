@@ -84,6 +84,16 @@ export const trendWatch = {
   run: () => api("/api/trends/run", { method: "POST" }),
 };
 
+// Instagram connection and publishing (backend/api/instagram.py).
+export const instagram = {
+  status: () => api("/api/instagram/status"),
+  connectUrl: () => api("/api/instagram/connect"),
+  finishConnect: (code, state) => api("/api/instagram/connect", { method: "POST", body: { code, state } }),
+  disconnect: () => api("/api/instagram/connect", { method: "DELETE" }),
+  uploadImage: (data) => api("/api/instagram/media", { method: "POST", body: { data } }),
+  publish: (body) => api("/api/instagram/publish", { method: "POST", body }),
+};
+
 // The slice of a project the AI helpers need.
 export function projectForAI(project) {
   return {

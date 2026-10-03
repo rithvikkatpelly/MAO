@@ -35,3 +35,19 @@ COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax").strip().lower()
 # Local development only: adds a "Continue as local developer" sign-in that skips Google.
 # Refused for any request that does not come from this machine.
 DEV_LOGIN = _flag("DEV_LOGIN")
+
+# Instagram publishing (docs/instagram.md). App ID and secret come from the Meta app's
+# Instagram > API setup with Instagram login page.
+INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID", "").strip()
+INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", "").strip()
+INSTAGRAM_GRAPH_VERSION = os.getenv("INSTAGRAM_GRAPH_VERSION", "v23.0").strip()
+
+# The API's public HTTPS address. Instagram redirects here after sign-in and downloads
+# post images from here, so it must be reachable from the internet (a tunnel in development).
+PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "").strip().rstrip("/")
+# Where the web app lives, for sending the creator back after connecting an account.
+APP_URL = os.getenv("APP_URL", ALLOWED_ORIGINS[0] if ALLOWED_ORIGINS else "http://localhost:5173").strip().rstrip("/")
+
+# Encrypts stored social account tokens and signs OAuth state. Any long random string;
+# changing it disconnects every account. Generate: python -c "import secrets; print(secrets.token_urlsafe(48))"
+SECRET_KEY = os.getenv("SECRET_KEY", "").strip()

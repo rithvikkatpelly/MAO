@@ -15,6 +15,7 @@ const EditorPage = lazy(() => import("./pages/app/EditorPage"));
 const CalendarPage = lazy(() => import("./pages/app/CalendarPage"));
 const IdeasPage = lazy(() => import("./pages/app/IdeasPage"));
 const InsightsPage = lazy(() => import("./pages/app/InsightsPage"));
+const ConnectionsPage = lazy(() => import("./pages/app/ConnectionsPage"));
 
 function NotFound() {
   return (
@@ -51,6 +52,7 @@ export default function App() {
                 <Route path="calendar" element={<CalendarPage />} />
                 <Route path="ideas" element={<IdeasPage />} />
                 <Route path="insights" element={<InsightsPage />} />
+                <Route path="connections" element={<ConnectionsPage />} />
               </Route>
               <Route path="/app/p/:id" element={<EditorPage />} />
             </Route>

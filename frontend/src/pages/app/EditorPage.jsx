@@ -29,6 +29,7 @@ import { Menu } from "../../components/Menu";
 import CaptionsPanel from "../../components/editor/CaptionsPanel";
 import { ChecklistButton, ScheduleButton } from "../../components/editor/Checks";
 import HistoryButton from "../../components/editor/HistoryPanel";
+import InstagramPublishButton from "../../components/editor/InstagramPublish";
 import { BrandKitSelect, SavedTemplates } from "../../components/editor/DesignExtras";
 import LayoutFields from "../../components/editor/LayoutFields";
 import SaveStatus from "../../components/editor/SaveStatus";
@@ -66,7 +67,7 @@ function useMediaQuery(query) {
 
 // ---- top bar ---------------------------------------------------------------
 
-function TopBar({ project, brand, onTitle, onChange, onRestore, onFlush, saveState, history, exporting, onExport }) {
+function TopBar({ project, brand, onTitle, onChange, onRestore, onFlush, saveState, history, exporting, onExport, onPublished }) {
   const kind = KINDS[project.kind] ?? KINDS.carousel;
   const size = sizeOf(project);
   const multi = project.slides.length > 1;
@@ -96,6 +97,7 @@ function TopBar({ project, brand, onTitle, onChange, onRestore, onFlush, saveSta
       </div>
       <HistoryButton project={project} brand={brand} onRestore={onRestore} onOpen={onFlush} />
       <ScheduleButton project={project} onChange={onChange} />
+      <InstagramPublishButton project={project} brand={brand} onPublished={onPublished} onOpen={onFlush} />
       <button className="btn btn-ghost btn-icon" onClick={history.undo} disabled={!history.canUndo} title={`Undo (${MOD_KEY} Z)`} aria-label="Undo">
         <Undo2 size={16} />
       </button>
@@ -620,6 +622,12 @@ function Editor({ initial }) {
     }
   }
 
+  function handlePublished({ permalink, posted_at }) {
+    const entry = { platform: "instagram", url: permalink, at: posted_at };
+    update({ published: [...(project.published ?? []), entry] });
+    versions.create(project, "export", "Posted to Instagram").catch(() => {});
+  }
+
   // ---- keyboard shortcuts
   useEffect(() => {
     function onKey(e) {
@@ -677,6 +685,7 @@ function Editor({ initial }) {
         history={history}
         exporting={exporting}
         onExport={handleExport}
+        onPublished={handlePublished}
       />
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">

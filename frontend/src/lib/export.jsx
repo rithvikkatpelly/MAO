@@ -152,6 +152,11 @@ export async function exportBundle(project, brand) {
   download(URL.createObjectURL(blob), `${name}-bundle.zip`);
 }
 
+// The first `count` slides as JPEG data URLs at native size, for publishing to a platform.
+export function renderJpegs(project, brand, count = project.slides.length) {
+  return rasterize(project, brand, project.slides.slice(0, count).map((_, i) => i), { type: "jpeg" });
+}
+
 export async function copyPng(project, brand, index) {
   const [png] = await rasterize(project, brand, [index]);
   const blob = await (await fetch(png)).blob();
