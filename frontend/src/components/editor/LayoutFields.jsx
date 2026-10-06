@@ -4,6 +4,7 @@ import { IMAGE_ACCEPT, fileToImage, photoToDataUrl } from "../../lib/image";
 import { SLIDE_ICONS } from "../../lib/slideIcons";
 import { LAYOUTS } from "../../lib/templates";
 import { useToast } from "../Toast";
+import VisualPanel from "../visual/VisualPanel";
 
 function PhotoPicker({ label, value, onChange, onRemove }) {
   const input = useRef(null);
@@ -69,7 +70,7 @@ function RowList({ rows, onChange, render, max = 6, empty }) {
 }
 
 // Layout picker plus the fields each layout needs, the icon, and the background photo.
-export default function LayoutFields({ slide, onSlide, hasSources }) {
+export default function LayoutFields({ project, slide, onSlide, hasSources }) {
   const layout = slide.layout ?? "standard";
 
   return (
@@ -91,6 +92,12 @@ export default function LayoutFields({ slide, onSlide, hasSources }) {
           ))}
         </div>
       </div>
+
+      {layout === "visual" && project && (
+        <div className="-mx-5 border-y border-line">
+          <VisualPanel project={project} slide={slide} onSlide={onSlide} />
+        </div>
+      )}
 
       {layout === "stat" && (
         <div>

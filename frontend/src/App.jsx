@@ -12,6 +12,7 @@ const LibraryPage = lazy(() => import("./pages/app/LibraryPage"));
 const CreatePage = lazy(() => import("./pages/app/CreatePage"));
 const BrandPage = lazy(() => import("./pages/app/BrandPage"));
 const EditorPage = lazy(() => import("./pages/app/EditorPage"));
+const VisualEditorPage = lazy(() => import("./pages/app/VisualEditorPage"));
 const CalendarPage = lazy(() => import("./pages/app/CalendarPage"));
 const IdeasPage = lazy(() => import("./pages/app/IdeasPage"));
 const InsightsPage = lazy(() => import("./pages/app/InsightsPage"));
@@ -55,6 +56,7 @@ export default function App() {
                 <Route path="connections" element={<ConnectionsPage />} />
               </Route>
               <Route path="/app/p/:id" element={<EditorPage />} />
+              <Route path="/app/visual/:id" element={<VisualEditorPage />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

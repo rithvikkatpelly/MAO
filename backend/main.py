@@ -16,7 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 import settings  # loads backend/.env before anything reads the environment
 from agents.orchestrator import AureaState, aurea_graph
-from api import ai, auth, instagram, items, profile, projects, trends
+from api import ai, auth, instagram, items, profile, projects, trends, visuals
 from api.auth import current_user
 from api.items import log_pick, log_research
 from db import close_db, db_status, init_db
@@ -53,6 +53,7 @@ app.include_router(items.router)
 app.include_router(ai.router)
 app.include_router(trends.router)
 app.include_router(instagram.router)
+app.include_router(visuals.router)
 
 llm = get_llm()
 

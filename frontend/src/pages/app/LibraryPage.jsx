@@ -7,9 +7,9 @@ import { FitSlide } from "../../components/SlideFrame";
 import { Segmented } from "../../components/controls";
 import { useToast } from "../../components/Toast";
 import { resolveBrand, useBrandKits } from "../../lib/brandkits";
-import { KINDS, TEXT_FORMATS, sizeOf } from "../../lib/formats";
+import { KINDS, STUDIO_FORMATS, TEXT_FORMATS, isStudioKind, kindMeta, sizeOf } from "../../lib/formats";
 import { outputToText } from "../../lib/outputs";
-import { blankProject } from "../../lib/project";
+import { blankProject, blankStudioProject } from "../../lib/project";
 import { deleteProject, duplicateProject, insertProject, useBrand, useProjectsState } from "../../lib/storage";
 import { relativeTime } from "../../lib/time";
 
@@ -19,6 +19,8 @@ const FILTERS = [
   { value: "poster", label: "Posters" },
   { value: "image", label: "Images" },
   { value: "thumbnail", label: "Thumbnails" },
+  { value: "deck", label: "Slides" },
+  { value: "infographic", label: "Infographics" },
   { value: "text", label: "Text" },
 ];
 
@@ -39,12 +41,12 @@ function ProjectCard({ project, brand, onDelete }) {
   const navigate = useNavigate();
   const toast = useToast();
   const isText = project.kind === "text";
-  const kind = isText ? TEXT_FORMATS[project.textFormat] ?? TEXT_FORMATS.linkedin_post : KINDS[project.kind] ?? KINDS.carousel;
+  const kind = isText ? TEXT_FORMATS[project.textFormat] ?? TEXT_FORMATS.linkedin_post : kindMeta(project.kind);
   const size = sizeOf(project);
 
   return (
     <div className="group card relative overflow-hidden transition hover:shadow-pop">
-      <Link to={`/app/p/${project.id}`} className="block" aria-label={`Open ${project.title}`}>
+      <Link to={isStudioKind(project.kind) ? `/app/visual/${project.id}` : `/app/p/${project.id}`} className="block" aria-label={`Open ${project.title}`}>
         <div className="bg-dots relative aspect-[4/3] border-b border-line">
           {isText ? (
             <TextThumb project={project} />
@@ -59,7 +61,7 @@ function ProjectCard({ project, brand, onDelete }) {
           )}
           {!isText && project.slides.length > 1 && (
             <span className="absolute bottom-2.5 left-2.5 rounded-md bg-ink/80 px-1.5 py-0.5 text-[11px] font-medium text-white backdrop-blur">
-              {project.slides.length} slides
+              {project.slides.length} {project.kind === "infographic" ? "pages" : "slides"}
             </span>
           )}
         </div>
@@ -121,8 +123,9 @@ function QuickStart() {
 
   function startBlank(kind) {
     try {
-      const project = insertProject(blankProject(kind, brand));
-      navigate(`/app/p/${project.id}`);
+      const studio = isStudioKind(kind);
+      const project = insertProject(studio ? blankStudioProject(kind, brand) : blankProject(kind, brand));
+      navigate(studio ? `/app/visual/${project.id}` : `/app/p/${project.id}`);
     } catch (err) {
       toast(err.message, { tone: "error" });
     }
@@ -137,7 +140,7 @@ function QuickStart() {
           <p className="mt-0.5 text-xs text-white/60">Research, write, and design</p>
         </div>
       </Link>
-      {Object.values(KINDS).map((kind) => (
+      {[...Object.values(KINDS), ...Object.values(STUDIO_FORMATS)].map((kind) => (
         <button key={kind.id} onClick={() => startBlank(kind.id)} className="card flex flex-col justify-between p-4 text-left transition hover:border-ink/20 hover:shadow-pop">
           <kind.icon size={18} className="text-muted" />
           <div className="mt-8">

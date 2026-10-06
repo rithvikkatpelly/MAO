@@ -24,7 +24,7 @@ VERSIONS_KEPT = 50
 
 class ProjectIn(BaseModel, extra="allow"):
     title: Annotated[str, StringConstraints(max_length=200)]
-    kind: Literal["carousel", "poster", "image", "thumbnail", "text"]
+    kind: Literal["carousel", "poster", "image", "thumbnail", "text", "deck", "infographic"]
     size: str = ""
     design: dict[str, Any] = Field(default_factory=dict)
     # Visual projects need at least one slide; text projects (threads, scripts) have none.

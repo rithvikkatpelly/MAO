@@ -2,14 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, Bookmark, BookmarkCheck, Check, Lightbulb, Minus, Plus, RefreshCw, Repeat2, Sparkles, WandSparkles, X } from "lucide-react";
 import PipelineProgress from "../../components/PipelineProgress";
+import { Segmented } from "../../components/controls";
 import { useToast } from "../../components/Toast";
-import { ai, describeError, generateContent, researchIdeas, startFromIdea } from "../../lib/api";
+import { ai, describeError, generateContent, researchIdeas, startFromIdea, visuals } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { refreshEngineStatus, useEngineStatus } from "../../lib/engine";
-import { KINDS, PLATFORMS, SIZES, TEXT_FORMATS } from "../../lib/formats";
+import { KINDS, PLATFORMS, SIZES, STUDIO_FORMATS, TEXT_FORMATS } from "../../lib/formats";
 import { saveItem, saveItems, useItems } from "../../lib/items";
 import { MOD_KEY } from "../../lib/keys";
-import { blankProject, projectFromResult, textProjectFromResult } from "../../lib/project";
+import { blankProject, blankStudioProject, projectFromResult, studioProjectFromResult, textProjectFromResult } from "../../lib/project";
 import { insertProject, useBrand } from "../../lib/storage";
 import { TEMPLATES } from "../../lib/templates";
 
@@ -33,6 +34,31 @@ function generateRun(textFormat) {
     steps,
   };
 }
+
+function studioRun(format, pasted) {
+  const deck = format === "deck";
+  return {
+    title: deck ? "Building your slides" : "Building your infographic",
+    subtitle: "Aurea plans the story, then picks and fills a diagram for each part. This usually takes one to three minutes.",
+    steps: [
+      { node: "research", label: pasted ? "Reading your text" : "Researching", detail: pasted ? "Your text is the only source of facts" : "Reading the top sources for your idea" },
+      { node: "outline", label: "Planning the story", detail: deck ? "One point per slide, plus speaker notes" : "A title and the diagram shape that fits your text" },
+      { node: "visuals", label: deck ? "Designing diagrams" : "Designing the diagram", detail: deck ? "Choosing a shape for each part and filling it in" : "Filling the diagram from your text" },
+      { node: "review", label: "Checking facts", detail: "Numbers must come from the sources" },
+    ],
+  };
+}
+
+const INPUT_MODES = [
+  { value: "topic", label: "Research a topic" },
+  { value: "text", label: "Use my text" },
+];
+
+const DENSITY = [
+  { value: "visual", label: "Mostly diagrams" },
+  { value: "balanced", label: "Balanced" },
+  { value: "text", label: "Mostly text" },
+];
 
 const EXAMPLES = [
   "5 lessons from launching a side project",
@@ -110,7 +136,12 @@ export default function CreatePage() {
 
   const [output, setOutput] = useState(preset.kind || series?.kind || "carousel"); // a KINDS id or a TEXT_FORMATS id
   const isText = output in TEXT_FORMATS;
-  const kind = isText ? "carousel" : output;
+  const isStudio = output in STUDIO_FORMATS;
+  const kind = isText || isStudio ? "carousel" : output;
+  const [inputMode, setInputMode] = useState("topic"); // studio formats: research a topic or use pasted text
+  const [pasted, setPasted] = useState("");
+  const [studioCount, setStudioCount] = useState(STUDIO_FORMATS[output]?.count.initial ?? 8);
+  const [density, setDensity] = useState("balanced");
   const [size, setSize] = useState(KINDS[kind]?.defaultSize ?? "portrait");
   const [template, setTemplate] = useState(series?.template && series.template !== "auto" ? series.template : "auto");
   const [slideCount, setSlideCount] = useState(series?.slide_count ?? 6);
@@ -132,7 +163,8 @@ export default function CreatePage() {
 
   function chooseOutput(id) {
     setOutput(id);
-    const nextKind = id in TEXT_FORMATS ? "carousel" : id;
+    if (id in STUDIO_FORMATS) setStudioCount(STUDIO_FORMATS[id].count.initial);
+    const nextKind = id in TEXT_FORMATS || id in STUDIO_FORMATS ? "carousel" : id;
     if (!KINDS[nextKind].sizes.includes(size)) setSize(KINDS[nextKind].defaultSize);
   }
 
@@ -140,7 +172,10 @@ export default function CreatePage() {
     const at = Date.now();
     setProgress((prev) => ({
       ...prev,
-      [event.node]: event.status === "running" ? { status: "running", startedAt: at } : { ...prev[event.node], status: "done", endedAt: at },
+      [event.node]:
+        event.status === "running"
+          ? { status: "running", startedAt: prev[event.node]?.status === "running" ? prev[event.node].startedAt : at, detail: event.detail }
+          : { ...prev[event.node], status: "done", endedAt: at, detail: undefined },
     }));
   }
 
@@ -162,9 +197,43 @@ export default function CreatePage() {
     }
   }
 
+  // Decks and infographics: research (or pasted text), outline, diagrams. Opens the visual studio.
+  async function runStudio({ idea = null, text = "" }) {
+    const data = await runPipeline(
+      (onStep, signal) =>
+        visuals.generate(
+          {
+            format: output,
+            topic: topic.trim(),
+            text,
+            idea: idea ? { title: idea.title, angle: idea.angle ?? "" } : null,
+            count: studioCount,
+            density,
+          },
+          onStep,
+          signal,
+        ),
+      studioRun(output, !!text),
+    );
+    if (!data) return;
+    try {
+      const project = insertProject(studioProjectFromResult({ result: data, kind: output, brand, template, topic: topic || idea?.topic || idea?.title || "", idea, text }));
+      if (idea?.id) saveItem("idea", { ...idea, status: "used" }).catch(() => {});
+      toast(`Your ${STUDIO_FORMATS[output].label.toLowerCase()} ${output === "deck" ? "are" : "is"} ready to edit`);
+      navigate(`/app/visual/${project.id}`);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function handleResearch(e) {
     e?.preventDefault();
     if (run) return;
+    if (isStudio && fromIdea) return runStudio({ idea: fromIdea });
+    if (isStudio && inputMode === "text") {
+      if (pasted.trim().length >= 40) runStudio({ text: pasted.trim() });
+      return;
+    }
     if (fromIdea) return generate(null, fromIdea);
     if (!topic.trim()) return;
     const data = await runPipeline(
@@ -183,6 +252,7 @@ export default function CreatePage() {
   // Generate from a research thread (index) or straight from a saved idea.
   async function generate(index, savedIdea = null) {
     const idea = savedIdea ?? ideas[index];
+    if (isStudio) return runStudio({ idea });
     const format = isText ? output : null;
     const data = await runPipeline(async (onStep, signal) => {
       let thread = threadId;
@@ -227,7 +297,7 @@ export default function CreatePage() {
   async function bookmark(i) {
     const idea = ideas[i];
     try {
-      const item = await saveItem("idea", { title: idea.title, angle: idea.angle, reason: idea.reason, topic, source: "research", status: "new", kind: isText ? "text" : kind });
+      const item = await saveItem("idea", { title: idea.title, angle: idea.angle, reason: idea.reason, topic, source: "research", status: "new", kind: isText ? "text" : isStudio ? output : kind });
       setSaved((s) => ({ ...s, [i]: item.id }));
     } catch (err) {
       toast(err.message, { tone: "error" });
@@ -239,7 +309,7 @@ export default function CreatePage() {
     try {
       const items = await saveItems(
         "idea",
-        rest.map(({ idea }) => ({ title: idea.title, angle: idea.angle, reason: idea.reason, topic, source: "research", status: "new", kind: isText ? "text" : kind })),
+        rest.map(({ idea }) => ({ title: idea.title, angle: idea.angle, reason: idea.reason, topic, source: "research", status: "new", kind: isText ? "text" : isStudio ? output : kind })),
       );
       setSaved((s) => ({ ...s, ...Object.fromEntries(rest.map(({ i }, j) => [i, items[j]?.id])) }));
       toast(`${items.length} ideas saved to your backlog`);
@@ -250,6 +320,10 @@ export default function CreatePage() {
 
   function startBlank() {
     try {
+      if (isStudio) {
+        navigate(`/app/visual/${insertProject(blankStudioProject(output, brand, template)).id}`);
+        return;
+      }
       const draft = blankProject(kind, brand, size);
       if (template !== "auto") draft.design.template = template;
       navigate(`/app/p/${insertProject(draft).id}`);
@@ -271,7 +345,7 @@ export default function CreatePage() {
         <PipelineProgress
           title={run.config.title}
           subtitle={run.config.subtitle}
-          steps={run.config.steps}
+          steps={run.config.steps.map((s) => ({ ...s, detail: progress[s.node]?.detail ?? s.detail }))}
           progress={progress}
           startedAt={run.startedAt}
           onCancel={() => abortRef.current?.abort()}
@@ -297,6 +371,12 @@ export default function CreatePage() {
               <OutputChoice key={k.id} active={output === k.id} icon={k.icon} label={k.label} description={k.description} onClick={() => chooseOutput(k.id)} />
             ))}
           </div>
+          <p className="mt-4 field-label">Slides and infographics</p>
+          <div className="grid grid-cols-2 gap-2.5">
+            {Object.values(STUDIO_FORMATS).map((f) => (
+              <OutputChoice key={f.id} active={output === f.id} icon={f.icon} label={f.label} description={f.description} onClick={() => chooseOutput(f.id)} />
+            ))}
+          </div>
           <p className="mt-4 field-label">Text</p>
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
             {Object.values(TEXT_FORMATS).map((f) => (
@@ -319,11 +399,36 @@ export default function CreatePage() {
               </div>
               <p className="mt-3 text-xs text-subtle">Research on this idea starts right away. No need to pick an angle again.</p>
             </div>
+          ) : isStudio && inputMode === "text" ? (
+            <>
+              <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
+                <label htmlFor="pasted" className="block text-sm font-medium text-ink">
+                  Paste your notes, article, or outline
+                </label>
+                <Segmented size="sm" value={inputMode} onChange={setInputMode} options={INPUT_MODES} />
+              </div>
+              <textarea
+                id="pasted"
+                value={pasted}
+                onChange={(e) => setPasted(e.target.value)}
+                placeholder="Aurea turns your text into diagrams, using only the facts in it. No web research."
+                rows={9}
+                maxLength={12000}
+                className="input mt-2 px-4 py-3 text-[15px]"
+              />
+              <p className="mt-1.5 flex justify-between text-xs text-subtle">
+                <span>{pasted.trim().length < 40 ? "Add at least a few sentences." : "Ready."}</span>
+                <span className="tabular-nums">{pasted.length} / 12000</span>
+              </p>
+            </>
           ) : (
             <>
-              <label htmlFor="topic" className="mt-8 block text-sm font-medium text-ink">
-                What is it about?
-              </label>
+              <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
+                <label htmlFor="topic" className="block text-sm font-medium text-ink">
+                  What is it about?
+                </label>
+                {isStudio && <Segmented size="sm" value={inputMode} onChange={setInputMode} options={INPUT_MODES} />}
+              </div>
               <textarea
                 id="topic"
                 value={topic}
@@ -363,7 +468,31 @@ export default function CreatePage() {
               </div>
               <p className="mt-2 text-xs text-subtle">Shapes tone and length for that platform.</p>
 
-              {(kind === "carousel" || isText) && (
+              {isStudio && STUDIO_FORMATS[output].count.max > 1 && (
+                <div className="mt-5">
+                  <p className="field-label">Number of {STUDIO_FORMATS[output].count.noun}</p>
+                  <div className="flex items-center gap-2">
+                    <button type="button" className="btn btn-secondary btn-icon h-9 w-9" onClick={() => setStudioCount((n) => Math.max(STUDIO_FORMATS[output].count.min, n - 1))} disabled={studioCount <= STUDIO_FORMATS[output].count.min} aria-label="Fewer">
+                      <Minus size={14} />
+                    </button>
+                    <span className="w-10 text-center text-lg font-semibold tabular-nums text-ink">{studioCount}</span>
+                    <button type="button" className="btn btn-secondary btn-icon h-9 w-9" onClick={() => setStudioCount((n) => Math.min(STUDIO_FORMATS[output].count.max, n + 1))} disabled={studioCount >= STUDIO_FORMATS[output].count.max} aria-label="More">
+                      <Plus size={14} />
+                    </button>
+                    <span className="text-xs text-subtle">
+                      {STUDIO_FORMATS[output].count.min} to {STUDIO_FORMATS[output].count.max}
+                    </span>
+                  </div>
+                </div>
+              )}
+              {output === "deck" && (
+                <div className="mt-5">
+                  <p className="field-label">Diagrams</p>
+                  <Segmented size="sm" value={density} onChange={setDensity} options={DENSITY} />
+                </div>
+              )}
+
+              {!isStudio && (kind === "carousel" || isText) && (
                 <div className="mt-5">
                   <p className="field-label">{isText ? "Research depth (slides drafted first)" : "Number of slides"}</p>
                   <div className="flex items-center gap-2">
@@ -380,7 +509,26 @@ export default function CreatePage() {
               )}
             </div>
 
-            {!isText && (
+            {isStudio && (
+              <div>
+                <label htmlFor="template" className="field-label">
+                  Template
+                </label>
+                <select id="template" value={template} onChange={(e) => setTemplate(e.target.value)} className="input">
+                  <option value="auto">{brand.template === "auto" ? "Minimal (clean, Napkin style)" : `Brand default (${TEMPLATES[brand.template]?.label})`}</option>
+                  {Object.entries(TEMPLATES).map(([id, t]) => (
+                    <option key={id} value={id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-2 text-xs text-subtle">
+                  {output === "deck" ? "16:9 slides at 1920 x 1080. Export as PNG, PDF, or PowerPoint." : "A title and one diagram at 1080 x 1350, built from your text. Export as PNG, PDF, or SVG."}
+                </p>
+              </div>
+            )}
+
+            {!isText && !isStudio && (
               <div>
                 <p className="field-label">Size</p>
                 <div className="flex flex-col gap-1">
@@ -430,11 +578,17 @@ export default function CreatePage() {
                 Start blank
               </button>
             )}
-            <button type="submit" disabled={(!fromIdea && !topic.trim()) || offline} className="btn btn-accent btn-lg">
-              {fromIdea ? <WandSparkles size={16} /> : <Sparkles size={16} />}
-              {fromIdea ? "Create from this idea" : "Research ideas"}
-              {!fromIdea && <span className="kbd hidden border-white/20 bg-white/15 text-white/80 sm:inline">{MOD_KEY} Enter</span>}
-            </button>
+            {isStudio && inputMode === "text" && !fromIdea ? (
+              <button type="submit" disabled={pasted.trim().length < 40 || offline} className="btn btn-accent btn-lg">
+                <WandSparkles size={16} /> Create {STUDIO_FORMATS[output].label.toLowerCase()}
+              </button>
+            ) : (
+              <button type="submit" disabled={(!fromIdea && !topic.trim()) || offline} className="btn btn-accent btn-lg">
+                {fromIdea ? <WandSparkles size={16} /> : <Sparkles size={16} />}
+                {fromIdea ? "Create from this idea" : "Research ideas"}
+                {!fromIdea && <span className="kbd hidden border-white/20 bg-white/15 text-white/80 sm:inline">{MOD_KEY} Enter</span>}
+              </button>
+            )}
           </div>
         </form>
       ) : (
@@ -485,7 +639,7 @@ export default function CreatePage() {
               <RefreshCw size={14} /> New ideas
             </button>
             <button type="button" onClick={() => generate(selected)} disabled={selected === null} className="btn btn-accent btn-lg">
-              <WandSparkles size={16} /> Create {isText ? TEXT_FORMATS[output].label : KINDS[kind].label.toLowerCase()}
+              <WandSparkles size={16} /> Create {isText ? TEXT_FORMATS[output].label : isStudio ? STUDIO_FORMATS[output].label.toLowerCase() : KINDS[kind].label.toLowerCase()}
             </button>
           </div>
         </div>

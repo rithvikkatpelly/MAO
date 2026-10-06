@@ -1,6 +1,6 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { getFontEmbedCSS, toJpeg, toPng } from "html-to-image";
+import { getFontEmbedCSS, toJpeg, toPng, toSvg } from "html-to-image";
 import { sizeOf } from "./formats";
 import { CUSTOM_PREFIX } from "./fonts";
 import { FONTS, SlideCanvas } from "./templates";
@@ -50,7 +50,7 @@ async function rasterize(project, brand, indices, { pixelRatio = 1, type = "png"
 
     const nodes = [...host.querySelectorAll("[data-slide]")];
     const fontEmbedCSS = await getFontEmbedCSS(nodes[0]);
-    const capture = type === "jpeg" ? toJpeg : toPng;
+    const capture = { jpeg: toJpeg, png: toPng, svg: toSvg }[type];
     const images = [];
     for (const node of nodes) {
       images.push(await capture(node, { width: w, height: h, pixelRatio, fontEmbedCSS, quality: 0.94 }));
@@ -74,6 +74,10 @@ function download(href, filename) {
 
 const pad = (n) => String(n).padStart(2, "0");
 
+function pages(project) {
+  return project.slides.map((_, i) => i);
+}
+
 export async function exportPng(project, brand, index) {
   const [png] = await rasterize(project, brand, [index]);
   download(png, `${slugify(project.title)}-${pad(index + 1)}.png`);
@@ -81,7 +85,7 @@ export async function exportPng(project, brand, index) {
 
 export async function exportZip(project, brand) {
   const { default: JSZip } = await import("jszip");
-  const images = await rasterize(project, brand, project.slides.map((_, i) => i));
+  const images = await rasterize(project, brand, pages(project));
   const zip = new JSZip();
   images.forEach((png, i) => zip.file(`${slugify(project.title)}-${pad(i + 1)}.png`, png.split(",")[1], { base64: true }));
   const blob = await zip.generateAsync({ type: "blob" });
@@ -102,7 +106,7 @@ async function buildPdf(project, images, format) {
 }
 
 export async function exportPdf(project, brand) {
-  const images = await rasterize(project, brand, project.slides.map((_, i) => i), { pixelRatio: 2, type: "jpeg" });
+  const images = await rasterize(project, brand, pages(project), { pixelRatio: 2, type: "jpeg" });
   (await buildPdf(project, images, "JPEG")).save(`${slugify(project.title)}.pdf`);
 }
 
@@ -126,7 +130,7 @@ threads/    Attach the images and paste post.txt.
 // One ZIP laid out per platform: sized images, a PDF for LinkedIn, and each platform's caption.
 export async function exportBundle(project, brand) {
   const { default: JSZip } = await import("jszip");
-  const images = await rasterize(project, brand, project.slides.map((_, i) => i));
+  const images = await rasterize(project, brand, pages(project));
   const zip = new JSZip();
   const name = slugify(project.title);
   const addImages = (folder, list) =>
@@ -154,7 +158,28 @@ export async function exportBundle(project, brand) {
 
 // The first `count` slides as JPEG data URLs at native size, for publishing to a platform.
 export function renderJpegs(project, brand, count = project.slides.length) {
-  return rasterize(project, brand, project.slides.slice(0, count).map((_, i) => i), { type: "jpeg" });
+  return rasterize(project, brand, pages(project).slice(0, count), { type: "jpeg" });
+}
+
+// One slide or infographic page as an SVG file with fonts embedded.
+export async function exportSvg(project, brand, index = 0) {
+  const [svg] = await rasterize(project, brand, [index], { type: "svg" });
+  download(svg, `${slugify(project.title)}-${pad(index + 1)}.svg`);
+}
+
+// A PowerPoint file: one full-bleed image per slide, with the speaker notes attached.
+export async function exportPptx(project, brand) {
+  const { default: PptxGenJS } = await import("pptxgenjs");
+  const images = await rasterize(project, brand, pages(project), { pixelRatio: 1 });
+  const pptx = new PptxGenJS();
+  pptx.layout = "LAYOUT_WIDE";
+  pptx.title = project.title;
+  images.forEach((png, i) => {
+    const slide = pptx.addSlide();
+    slide.addImage({ data: png, x: 0, y: 0, w: "100%", h: "100%" });
+    if (project.slides[i]?.notes) slide.addNotes(project.slides[i].notes);
+  });
+  await pptx.writeFile({ fileName: `${slugify(project.title)}.pptx` });
 }
 
 export async function copyPng(project, brand, index) {

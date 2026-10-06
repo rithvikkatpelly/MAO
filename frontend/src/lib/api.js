@@ -94,6 +94,12 @@ export const instagram = {
   publish: (body) => api("/api/instagram/publish", { method: "POST", body }),
 };
 
+// Decks, infographics, and diagrams (backend/api/visuals.py).
+export const visuals = {
+  generate: (body, onStep, signal) => streamPipeline(`${API_BASE}/api/visuals/generate`, body, onStep, signal),
+  visualize: (body) => api("/api/visuals/visualize", { method: "POST", body }),
+};
+
 // The slice of a project the AI helpers need.
 export function projectForAI(project) {
   return {

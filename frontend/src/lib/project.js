@@ -1,4 +1,5 @@
 import { KINDS } from "./formats";
+import { normalizeVisual, starterVisual } from "./visualTypes";
 import { cleanProjectCopy } from "./text";
 import { uid } from "./storage";
 
@@ -95,5 +96,58 @@ export function textProjectFromResult({ result, idea, topic, format, output, bra
     }),
     textFormat: format,
     outputs: { [format]: output },
+  };
+}
+
+// ---- decks and infographics -------------------------------------------------------------
+
+function studioDesign(kind, brand, template) {
+  const chosen = template && template !== "auto" ? template : brand.template !== "auto" ? brand.template : "minimal";
+  const deck = kind === "deck";
+  // An infographic is just a title and its diagram: no brand line or page numbers unless turned on.
+  return { ...defaultDesign("carousel", brand, chosen), showBrand: deck, showNumbers: deck, showArrow: false, showCta: false, showTitle: true };
+}
+
+function studioSlide({ visual, ...fields }) {
+  return makeSlide({ ...fields, layout: visual ? "visual" : "standard", ...(visual ? { visual: normalizeVisual(visual) } : {}) });
+}
+
+// A deck or infographic from /api/visuals/generate.
+export function studioProjectFromResult({ result, kind, brand, template, topic, idea, text = "" }) {
+  return cleanProjectCopy({
+    title: result.title,
+    kind,
+    size: kind,
+    design: studioDesign(kind, brand, template),
+    slides: result.slides.map((s) =>
+      studioSlide({ kicker: s.kicker ?? "", headline: s.headline, body: s.body ?? "", notes: s.notes ?? "", role: s.role ?? "page", visual: s.visual }),
+    ),
+    caption: result.caption ?? "",
+    hashtags: [...new Set([...(result.hashtags ?? []), ...brand.hashtags])],
+    cta: "",
+    sources: result.sources ?? [],
+    // The pasted text stays with the project so "Rewrite" can rebuild the diagram from all of it.
+    source: { topic, idea: idea ?? null, ...(text ? { text } : {}) },
+  });
+}
+
+export function blankStudioProject(kind, brand, template) {
+  const deck = [
+    { role: "title", kicker: "Presentation", headline: "Your presentation title", body: "A one-line promise of what the audience gets." },
+    { role: "content", kicker: "How it works", headline: "Three steps to the result", body: "", visual: starterVisual("process") },
+    { role: "content", kicker: "Why it matters", headline: "What changes for your audience", body: "", visual: starterVisual("iconlist") },
+    { role: "summary", kicker: "Recap", headline: "One idea to remember", body: "Close with the takeaway and a next step." },
+  ];
+  const infographic = [{ kicker: "", headline: "Your diagram title", body: "", visual: starterVisual("process") }];
+  return {
+    title: kind === "deck" ? "Untitled presentation" : "Untitled infographic",
+    kind,
+    size: kind,
+    design: studioDesign(kind, brand, template),
+    slides: (kind === "deck" ? deck : infographic).map((s) => studioSlide({ notes: "", kicker: "", role: "page", ...s })),
+    caption: "",
+    hashtags: [...brand.hashtags],
+    cta: "",
+    source: null,
   };
 }

@@ -2,6 +2,7 @@ import { alpha, luminance, mix, onColor, shiftHue } from "./color";
 import { CUSTOM_PREFIX, customFontCss } from "./fonts";
 import { sizeOf } from "./formats";
 import { SLIDE_ICONS } from "./slideIcons";
+import { VisualBlock } from "./visuals";
 
 // Slides render at their native pixel size with inline styles only, so the
 // same markup drives the editor preview, the thumbnails, and the exported files.
@@ -215,6 +216,7 @@ export const LAYOUTS = {
   code: { label: "Code" },
   image: { label: "Screenshot" },
   sources: { label: "Sources" },
+  visual: { label: "Diagram" },
 };
 
 const MONO = "ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
@@ -248,6 +250,23 @@ const DESIGN_DEFAULTS = {
   showCta: true,
 };
 
+// The template theme, fonts, and accent for a project (shared by slides, infographics, and previews).
+export function themeFor(project) {
+  const design = { ...DESIGN_DEFAULTS, ...project.design, accent: /^#[0-9a-f]{6}$/i.test(project.design?.accent ?? "") ? project.design.accent : DESIGN_DEFAULTS.accent };
+  const tpl = TEMPLATES[design.template] ?? TEMPLATES.midnight;
+  const headFont = design.font?.startsWith(CUSTOM_PREFIX)
+    ? customFontCss(design.font.slice(CUSTOM_PREFIX.length))
+    : (FONTS[design.font] ?? FONTS[tpl.font]).css;
+  return { design, tpl, t: tpl.theme(design.accent), headFont };
+}
+
+// Rough rendered height of a block of text, for sizing the diagram box under a headline.
+function textHeight(text, fontSize, width, lineHeight) {
+  if (!text) return 0;
+  const lines = text.split("\n").reduce((n, line) => n + Math.max(1, Math.ceil((line.length * fontSize * 0.52) / width)), 0);
+  return lines * fontSize * lineHeight;
+}
+
 export function SlideCanvas({ project, slide: rawSlide, index, brand }) {
   const { w, h } = sizeOf(project);
   // Projects come from the server as stored JSON; fill anything missing instead of crashing.
@@ -276,7 +295,7 @@ export function SlideCanvas({ project, slide: rawSlide, index, brand }) {
   const layer = { position: "relative", zIndex: 1 };
 
   const showCta = design.showCta && isLast && project.cta;
-  const showArrow = design.showArrow && multi && !isLast;
+  const showArrow = design.showArrow && multi && !isLast && project.kind !== "deck";
   const pageLabel = `${String(index + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}`;
 
   // In the split layout the top (or left) block is accent-colored.
@@ -362,7 +381,7 @@ export function SlideCanvas({ project, slide: rawSlide, index, brand }) {
   );
 
   const headlineEl = (scale = 1) =>
-    slide.headline && (
+    slide.headline && design.showTitle !== false && (
       <div
         style={{
           fontFamily: headFont,
@@ -390,7 +409,31 @@ export function SlideCanvas({ project, slide: rawSlide, index, brand }) {
 
   let blocks;
   let fullWidth = false;
-  if (layout === "stat") {
+  if (layout === "visual" && slide.visual) {
+    // The diagram fills whatever the header, footer, and headline leave.
+    const boxW = t.split ? (landscape ? w * 0.6 : w) - 2 * pad : w - 2 * pad;
+    const regionH = t.split && !landscape ? h * 0.62 : h;
+    const headSize = 92 * u * headlineScale(slide.headline, false) * (landscape ? 0.92 : 1) * 0.6;
+    const reserved =
+      2 * pad +
+      (t.split ? 0 : (design.showBrand || (design.showNumbers && multi) ? 60 * u : 0) + 32 * u) +
+      (footer ? 90 * u : 0) +
+      (kickerText ? 23 * u * 1.4 + 28 * u : 0) +
+      (slide.headline && design.showTitle !== false ? textHeight(slide.headline, headSize, boxW, 1.06) + 28 * u : 0) +
+      (slide.body ? textHeight(slide.body, 28 * u, boxW * 0.9, 1.45) + 28 * u : 0) +
+      12 * u;
+    fullWidth = true;
+    blocks = [
+      kickerEl,
+      headlineEl(0.6),
+      slide.body && (
+        <div key="vb" style={{ fontFamily: BODY_FONT, fontSize: 28 * u, lineHeight: 1.45, color: t.muted, maxWidth: "90%", whiteSpace: "pre-wrap" }}>
+          {slide.body}
+        </div>
+      ),
+      <VisualBlock key="visual" visual={slide.visual} t={t} accent={design.accent} w={boxW} h={Math.max(200 * u, regionH - reserved)} headFont={headFont} />,
+    ];
+  } else if (layout === "stat") {
     const value = slide.stat?.value || "0";
     blocks = [
       iconEl,
@@ -612,3 +655,4 @@ export function SlideCanvas({ project, slide: rawSlide, index, brand }) {
     </div>
   );
 }
+

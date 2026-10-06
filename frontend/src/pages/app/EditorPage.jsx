@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import {
   AlignCenter,
   AlignLeft,
@@ -44,7 +44,7 @@ import { useAutosave } from "../../lib/autosave";
 import { useBrandKits, useProjectBrand } from "../../lib/brandkits";
 import { copyPng, exportBundle, exportPdf, exportPng, exportZip } from "../../lib/export";
 import { CUSTOM_PREFIX, customFontCss, useCustomFonts } from "../../lib/fonts";
-import { KINDS, SIZES, SLIDE_LIMIT, sizeOf } from "../../lib/formats";
+import { KINDS, SIZES, SLIDE_LIMIT, isStudioKind, sizeOf } from "../../lib/formats";
 import { useUndoable } from "../../lib/history";
 import { MOD_KEY, isMod, isTyping } from "../../lib/keys";
 import { defaultDesign, makeSlide } from "../../lib/project";
@@ -299,7 +299,7 @@ function SlidePanel({ project, index, onSlide, onClean }) {
         </div>
       </Section>
       <Section title="Layout and media">
-        <LayoutFields slide={slide} onSlide={onSlide} hasSources={hasSources} />
+        <LayoutFields project={project} slide={slide} onSlide={onSlide} hasSources={hasSources} />
       </Section>
       {project.source?.idea && (
         <Section title="Idea">
@@ -766,5 +766,6 @@ export default function EditorPage() {
     );
   }
   if (initial.kind === "text") return <TextEditor key={id} initial={initial} />;
+  if (isStudioKind(initial.kind)) return <Navigate to={`/app/visual/${id}`} replace />;
   return <Editor key={id} initial={initial} />;
 }

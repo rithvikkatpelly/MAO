@@ -5,7 +5,7 @@ import { Segmented, Toggle } from "../../components/controls";
 import { useToast } from "../../components/Toast";
 import { ai } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
-import { KINDS, TEXT_FORMATS } from "../../lib/formats";
+import { KINDS, TEXT_FORMATS, kindMeta } from "../../lib/formats";
 import { deleteItem, saveItem, saveItems, useItems } from "../../lib/items";
 import { saveProject, useProjects } from "../../lib/storage";
 
@@ -41,7 +41,7 @@ function visibleDays(anchor, view) {
 
 function kindLabel(project) {
   if (project.kind === "text") return TEXT_FORMATS[project.textFormat]?.label ?? "Text";
-  return KINDS[project.kind]?.label ?? "Post";
+  return kindMeta(project.kind)?.label ?? "Post";
 }
 
 function Chip({ drag, children, className = "", onClick }) {

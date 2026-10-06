@@ -27,7 +27,7 @@ ItemId = Annotated[str, StringConstraints(pattern=ID_PATTERN)]
 Short = Annotated[str, StringConstraints(max_length=120)]
 Text = Annotated[str, StringConstraints(max_length=600)]
 DateStr = Annotated[str, StringConstraints(pattern=r"^(\d{4}-\d{2}-\d{2}.*)?$", max_length=40)]
-Kind = Literal["carousel", "poster", "image", "thumbnail", "text", ""]
+Kind = Literal["carousel", "poster", "image", "thumbnail", "text", "deck", "infographic", ""]
 
 
 class Idea(BaseModel):

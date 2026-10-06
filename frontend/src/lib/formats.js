@@ -1,4 +1,4 @@
-import { AlignLeft, Clapperboard, GalleryHorizontalEnd, Image, ListOrdered, Mail, MonitorPlay, PlaySquare, RectangleVertical, Type } from "lucide-react";
+import { AlignLeft, Clapperboard, GalleryHorizontalEnd, Image, LayoutPanelTop, ListOrdered, Mail, MonitorPlay, PlaySquare, Presentation, RectangleVertical, Type } from "lucide-react";
 
 export const SIZES = {
   portrait: { id: "portrait", label: "Portrait", ratio: "4:5", w: 1080, h: 1350, hint: "Instagram and LinkedIn feed" },
@@ -67,7 +67,41 @@ export const PLATFORMS = [
   { id: "x", label: "X" },
 ];
 
+// Presentation decks and infographics (one diagram per page): generated with diagrams and edited in the visual studio
+// (pages/app/VisualEditorPage.jsx). Their sizes are fixed, so they stay out of SIZES.
+export const STUDIO_FORMATS = {
+  deck: {
+    id: "deck",
+    label: "Slides",
+    icon: Presentation,
+    description: "A presentation deck with diagrams and speaker notes",
+    count: { min: 5, max: 15, initial: 8, noun: "slides" },
+  },
+  infographic: {
+    id: "infographic",
+    label: "Infographic",
+    icon: LayoutPanelTop,
+    description: "One diagram from your text, Napkin style",
+    count: { min: 1, max: 1, initial: 1, noun: "infographics" },
+  },
+};
+
+export const STUDIO_SIZES = {
+  deck: { id: "deck", label: "Presentation", ratio: "16:9", w: 1920, h: 1080 },
+  infographic: { id: "infographic", label: "Infographic", ratio: "4:5", w: 1080, h: 1350 },
+};
+
+export function isStudioKind(kind) {
+  return kind in STUDIO_FORMATS;
+}
+
+// Label and icon for any visual project kind.
+export function kindMeta(kind) {
+  return KINDS[kind] ?? STUDIO_FORMATS[kind] ?? KINDS.carousel;
+}
+
 export function sizeOf(project) {
+  if (project.kind in STUDIO_SIZES) return STUDIO_SIZES[project.kind];
   return SIZES[project.size] ?? SIZES.portrait;
 }
 
