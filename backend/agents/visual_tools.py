@@ -15,6 +15,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, create_model
 
+from guardrails.untrusted import fence, unfence
 from llm import invoke_structured
 from text_rules import STYLE_RULE, clean
 
@@ -106,7 +107,7 @@ def pick_type(text: str, voice: str = "") -> str:
     pick = invoke_structured(
         TypePick,
         f"Choose the diagram type that best shows this content.\n\nCatalog:\n{CATALOG_PROMPT}\n\n"
-        f"Content:\n{text[:1500]}\n\nLikely fits, from a quick scan: {hints}. "
+        f"Content:\n{fence('content', text[:1500])}\n\nLikely fits, from a quick scan: {hints}. "
         "Only choose stats or bars if the content contains real numbers.",
         temperature=0.1,
         max_tokens=60,
@@ -225,7 +226,7 @@ def fill_visual(vtype: str, message: str, facts: str, voice: str = "", avoid: li
     data = invoke_structured(
         _schema(vtype),
         f"{voice}\n\nYou are filling in a {TYPES[vtype]['label']} diagram ({TYPES[vtype]['use']}).\n"
-        f"It shows only this point, broken into its parts: {message}\n{others}\nFacts you may use:\n{facts[:3500]}\n\n"
+        f"It shows only this point, broken into its parts: {message}\n{others}\nFacts you may use:\n{fence('facts', unfence(facts)[:3500])}\n\n"
         f"Use {lo} to {hi} items. Labels are 2 to 4 words; details are one short line. {_TYPE_RULES.get(vtype, '')}"
         "Pick a fitting icon for each item. Use only facts given above and never invent numbers, "
         "names, or dates.\n" + STYLE_RULE,
@@ -253,7 +254,7 @@ def validate_visual(visual: dict, facts: str) -> dict:
     """Numbers must come from the facts, once each. A chart left too thin becomes big numbers,
     and big numbers left too thin become an icon list, so nothing is invented to fill space."""
     if visual["type"] in DATA_TYPES:
-        known = {_digits(n) for n in numbers_in(facts)} - {""}
+        known = {_digits(n) for n in numbers_in(unfence(facts))} - {""}
         kept, seen = [], set()
         for item in visual["items"]:
             d = _digits(item["value"])
@@ -315,7 +316,7 @@ def deck_outline(n: int, brief: str, facts: str, voice: str, density: str):
     share = {"visual": "nearly every content slide", "balanced": "about half of the content slides", "text": "only a few slides"}[density]
     return invoke_structured(
         schema,
-        f"{voice}\n\nPlan a {n}-slide presentation.\nBrief: {brief}\n\nFacts to build on:\n{facts[:4000]}\n\n"
+        f"{voice}\n\nPlan a {n}-slide presentation.\nBrief: {brief}\n\nFacts to build on:\n{fence('facts', unfence(facts)[:4000])}\n\n"
         "Slide 1 is the title slide (role title, visual none). The last slide is a summary or a call to action. "
         "Every slide makes one point. Use a diagram on " + share + ", choosing the type that fits from:\n"
         f"{CATALOG_PROMPT}\nOnly use stats or bars when the facts contain the numbers. Choose each type from what that "
@@ -337,7 +338,7 @@ def infographic_plan(brief: str, facts: str, voice: str):
     )
     return invoke_structured(
         schema,
-        f"{voice}\n\nTurn this content into ONE diagram that captures all of it.\nBrief: {brief}\n\nContent:\n{facts[:4000]}\n\n"
+        f"{voice}\n\nTurn this content into ONE diagram that captures all of it.\nBrief: {brief}\n\nContent:\n{fence('content', unfence(facts)[:4000])}\n\n"
         f"Choose the diagram type from what the content is:\n{CATALOG_PROMPT}\n"
         "Only use stats or bars when the content contains the numbers.\n" + STYLE_RULE,
         temperature=0.3,

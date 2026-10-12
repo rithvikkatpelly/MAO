@@ -138,5 +138,9 @@ export function prePublishChecklist(project) {
     const empty = slides.findIndex((s) => !s.headline?.trim() && (s.layout ?? "standard") === "standard");
     add("empty", "No empty slides", empty === -1 ? "pass" : "fail", empty === -1 ? "Every slide has a headline" : `Slide ${empty + 1} has no headline`);
   }
+
+  // Notes from the server's grounding and safety checks when this post was generated.
+  const notes = project.aiWarnings ?? [];
+  if (notes.length) add("ai-review", "AI review notes", "warn", notes.join(" "));
   return checks;
 }

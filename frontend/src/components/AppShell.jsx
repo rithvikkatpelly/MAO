@@ -1,5 +1,5 @@
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { ArrowUpRight, CalendarDays, ChartColumn, ChevronsUpDown, ClipboardList, LayoutGrid, Lightbulb, Link2, LogOut, Palette, Plus, Sparkles } from "lucide-react";
+import { ArrowUpRight, CalendarDays, ChartColumn, ChevronsUpDown, ClipboardList, LayoutGrid, Lightbulb, Link2, LogOut, Palette, Plus, ShieldCheck, Sparkles } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useEngineStatus } from "../lib/engine";
 import { Menu } from "./Menu";
@@ -97,6 +97,7 @@ function AccountMenu({ compact = false }) {
       items={[
         { label: "Brand kit", icon: Palette, onClick: () => navigate("/app/brand") },
         { label: "Connections", icon: Link2, onClick: () => navigate("/app/connections") },
+        { label: "Account and data", icon: ShieldCheck, onClick: () => navigate("/app/account") },
         { label: "Update questionnaire", icon: ClipboardList, onClick: () => navigate("/onboarding") },
         "divider",
         { label: "Sign out", icon: LogOut, onClick: () => navigate("/signout") },

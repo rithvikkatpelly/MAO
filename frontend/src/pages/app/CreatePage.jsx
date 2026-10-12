@@ -12,16 +12,21 @@ import { saveItem, saveItems, useItems } from "../../lib/items";
 import { MOD_KEY } from "../../lib/keys";
 import { blankProject, blankStudioProject, projectFromResult, studioProjectFromResult, textProjectFromResult } from "../../lib/project";
 import { insertProject, useBrand } from "../../lib/storage";
+import { resetTime, useUsage } from "../../lib/usage";
 import { TEMPLATES } from "../../lib/templates";
+
+// The server checks what a request means before any research or writing starts.
+const SAFETY_STEP = { node: "safety", label: "Safety check", detail: "Making sure this is something Aurea can help with" };
 
 const RESEARCH_RUN = {
   title: "Researching your topic",
   subtitle: "Searching the web and news for fresh, timely angles.",
-  steps: [{ node: "research", label: "Researching topic", detail: "Reading the top sources, then drafting content ideas" }],
+  steps: [SAFETY_STEP, { node: "research", label: "Researching topic", detail: "Reading the top sources, then drafting content ideas" }],
 };
 
 function generateRun(textFormat) {
   const steps = [
+    SAFETY_STEP,
     { node: "deep_research", label: "Deep research", detail: "Gathering facts and sources for your idea", parallel: true },
     { node: "brand_context", label: "Your voice and platform", detail: "Your tone, audience, examples, and what performed", parallel: true },
     { node: "content", label: "Writing copy", detail: "Drafting slides, caption, and call to action" },
@@ -41,6 +46,7 @@ function studioRun(format, pasted) {
     title: deck ? "Building your slides" : "Building your infographic",
     subtitle: "Aurea plans the story, then picks and fills a diagram for each part. This usually takes one to three minutes.",
     steps: [
+      SAFETY_STEP,
       { node: "research", label: pasted ? "Reading your text" : "Researching", detail: pasted ? "Your text is the only source of facts" : "Reading the top sources for your idea" },
       { node: "outline", label: "Planning the story", detail: deck ? "One point per slide, plus speaker notes" : "A title and the diagram shape that fits your text" },
       { node: "visuals", label: deck ? "Designing diagrams" : "Designing the diagram", detail: deck ? "Choosing a shape for each part and filling it in" : "Filling the diagram from your text" },
@@ -120,6 +126,23 @@ function OutputChoice({ active, icon: Icon, label, description, onClick }) {
 
 const PLATFORM_ALIASES = { LinkedIn: "linkedin", Instagram: "instagram", X: "x" };
 
+// Each finished post, deck, or infographic uses one of the day's designs (backend/guardrails/config.py).
+function DesignsLeft({ designs, usage }) {
+  if (!designs) return null;
+  if (designs.left <= 0) {
+    return (
+      <p className="mt-3 text-right text-xs text-amber-700">
+        You have used all {designs.limit} designs for today. More are available after {resetTime(usage)}.
+      </p>
+    );
+  }
+  return (
+    <p className="mt-3 text-right text-xs text-subtle">
+      {designs.left} of {designs.limit} designs left today
+    </p>
+  );
+}
+
 export default function CreatePage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -156,6 +179,9 @@ export default function CreatePage() {
   const [run, setRun] = useState(null);
   const [progress, setProgress] = useState({});
   const abortRef = useRef(null);
+  const [usage, refreshUsage] = useUsage();
+  const designs = usage?.buckets?.design;
+  const outOfDesigns = designs ? designs.left <= 0 : false;
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -194,6 +220,7 @@ export default function CreatePage() {
       return null;
     } finally {
       setRun(null);
+      refreshUsage();
     }
   }
 
@@ -579,17 +606,18 @@ export default function CreatePage() {
               </button>
             )}
             {isStudio && inputMode === "text" && !fromIdea ? (
-              <button type="submit" disabled={pasted.trim().length < 40 || offline} className="btn btn-accent btn-lg">
+              <button type="submit" disabled={pasted.trim().length < 40 || offline || outOfDesigns} className="btn btn-accent btn-lg">
                 <WandSparkles size={16} /> Create {STUDIO_FORMATS[output].label.toLowerCase()}
               </button>
             ) : (
-              <button type="submit" disabled={(!fromIdea && !topic.trim()) || offline} className="btn btn-accent btn-lg">
+              <button type="submit" disabled={(!fromIdea && !topic.trim()) || offline || (fromIdea && outOfDesigns)} className="btn btn-accent btn-lg">
                 {fromIdea ? <WandSparkles size={16} /> : <Sparkles size={16} />}
                 {fromIdea ? "Create from this idea" : "Research ideas"}
                 {!fromIdea && <span className="kbd hidden border-white/20 bg-white/15 text-white/80 sm:inline">{MOD_KEY} Enter</span>}
               </button>
             )}
           </div>
+          <DesignsLeft designs={designs} usage={usage} />
         </form>
       ) : (
         <div className="animate-fade-in">
@@ -638,10 +666,11 @@ export default function CreatePage() {
             <button type="button" onClick={handleResearch} className="btn btn-secondary sm:ml-auto">
               <RefreshCw size={14} /> New ideas
             </button>
-            <button type="button" onClick={() => generate(selected)} disabled={selected === null} className="btn btn-accent btn-lg">
+            <button type="button" onClick={() => generate(selected)} disabled={selected === null || outOfDesigns} className="btn btn-accent btn-lg">
               <WandSparkles size={16} /> Create {isText ? TEXT_FORMATS[output].label : isStudio ? STUDIO_FORMATS[output].label.toLowerCase() : KINDS[kind].label.toLowerCase()}
             </button>
           </div>
+          <DesignsLeft designs={designs} usage={usage} />
         </div>
       )}
     </div>

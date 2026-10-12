@@ -224,6 +224,10 @@ cp backend/.env.example backend/.env   # then fill in DATABASE_URL and GOOGLE_CL
 Instagram publishing needs a Meta app and a public tunnel to the API, even locally.
 Follow **[docs/instagram.md](docs/instagram.md)**.
 
+AI and publishing limits, prompt injection and jailbreak defenses, content policy, the context
+window, kill switches, and data retention are described in **[docs/guardrails.md](docs/guardrails.md)**.
+By default each creator gets 5 designs per day, and a chat keeps at most 200,000 tokens of history.
+
 ### Run
 
 ```bash

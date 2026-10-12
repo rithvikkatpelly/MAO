@@ -43,7 +43,7 @@ function InstagramCard() {
     setParams({}, { replace: true });
     if (failed) {
       takeReturnPath();
-      setError(failed);
+      setError(INSTAGRAM_ERRORS[failed] ?? INSTAGRAM_ERRORS.failed);
       load();
       return;
     }
@@ -182,6 +182,12 @@ function InstagramCard() {
     </div>
   );
 }
+
+// The server sends a code, not a message, so a crafted link cannot show its own text here.
+const INSTAGRAM_ERRORS = {
+  denied: "Instagram sign-in was cancelled. Connect again when you are ready.",
+  failed: "Instagram did not finish signing in. Please try again.",
+};
 
 export default function ConnectionsPage() {
   return (

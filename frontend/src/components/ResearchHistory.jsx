@@ -4,6 +4,7 @@ import { Bookmark, BookmarkCheck, ChevronDown, CircleCheck, ExternalLink, Histor
 import { KINDS } from "../lib/formats";
 import { deleteItem, saveItem, useItems } from "../lib/items";
 import { relativeTime } from "../lib/time";
+import { safeUrl } from "../lib/url";
 import { useToast } from "./Toast";
 
 const PLATFORM_LABELS = { linkedin: "LinkedIn", instagram: "Instagram", x: "X" };
@@ -94,17 +95,24 @@ function Run({ run, savedTitles }) {
             <div>
               <p className="field-label">Sources used for "{run.picked}"</p>
               <ol className="space-y-1.5">
-                {run.sources.map((s, i) => (
-                  <li key={s.url || i} className="flex gap-2 text-xs">
-                    <span className="w-4 shrink-0 font-semibold text-accent">{i + 1}</span>
-                    <a href={s.url} target="_blank" rel="noopener noreferrer" className="group min-w-0">
-                      <span className="text-ink group-hover:underline">{s.title}</span>{" "}
-                      <span className="inline-flex items-center gap-0.5 text-subtle">
-                        {domainOf(s.url)} <ExternalLink size={10} />
-                      </span>
-                    </a>
-                  </li>
-                ))}
+                {run.sources.map((s, i) => {
+                  const href = safeUrl(s.url);
+                  return (
+                    <li key={s.url || i} className="flex gap-2 text-xs">
+                      <span className="w-4 shrink-0 font-semibold text-accent">{i + 1}</span>
+                      {href ? (
+                        <a href={href} target="_blank" rel="noopener noreferrer" className="group min-w-0">
+                          <span className="text-ink group-hover:underline">{s.title}</span>{" "}
+                          <span className="inline-flex items-center gap-0.5 text-subtle">
+                            {domainOf(href)} <ExternalLink size={10} />
+                          </span>
+                        </a>
+                      ) : (
+                        <span className="min-w-0 text-ink">{s.title}</span>
+                      )}
+                    </li>
+                  );
+                })}
               </ol>
             </div>
           )}

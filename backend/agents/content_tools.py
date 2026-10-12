@@ -5,6 +5,7 @@ from typing import Annotated
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field, create_model
 
+from guardrails.untrusted import fence
 from llm import invoke_structured
 from text_rules import STYLE_RULE
 
@@ -153,7 +154,7 @@ def validate_and_refine(
     result = invoke_structured(
         _carousel_schema_for(slide_count),
         f"Guidelines:\n{brand_notes}\n\n"
-        f"Carousel:\n{carousel.model_dump_json(indent=2)}\n\n"
+        f"Carousel:\n{fence('draft', carousel.model_dump_json(indent=2))}\n\n"
         "Fix these problems and keep everything else, including the number of slides:\n- "
         + "\n- ".join(issues),
         temperature=0,

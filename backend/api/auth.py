@@ -18,6 +18,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
 from db import connection, db_status
+from guardrails import ratelimit
 from settings import (
     COOKIE_SAMESITE,
     COOKIE_SECURE,
@@ -97,6 +98,30 @@ def _start_session(response: Response, request: Request, user_id) -> None:
     )
 
 
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(SESSION_COOKIE, path="/", secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE)
+
+
+def _client(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+# Headers a tunnel or reverse proxy adds. A request carrying any of them did not come
+# straight from this machine, even though the proxy itself connects from 127.0.0.1.
+_PROXY_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded", "cf-connecting-ip", "cf-ray", "true-client-ip", "via")
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+
+
+def _is_direct_local(request: Request) -> bool:
+    if _client(request) not in ("127.0.0.1", "::1"):
+        return False
+    if any(h in request.headers for h in _PROXY_HEADERS):
+        return False
+    host = request.headers.get("host", "").lower()
+    host = host.split("]")[0] + "]" if host.startswith("[") else host.split(":")[0]
+    return host in _LOCAL_HOSTS
+
+
 def current_user(aurea_session: str | None = Cookie(default=None)) -> dict:
     """FastAPI dependency: the signed-in user, or 401."""
     if not aurea_session:
@@ -134,6 +159,7 @@ class GoogleSignIn(BaseModel):
 
 @router.post("/google")
 def sign_in_with_google(body: GoogleSignIn, request: Request, response: Response):
+    ratelimit.hit(_client(request), "auth")
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(503, "Google sign-in is not configured. Set GOOGLE_CLIENT_ID on the server.")
     try:
@@ -150,9 +176,11 @@ def sign_in_with_google(body: GoogleSignIn, request: Request, response: Response
 
 @router.post("/dev-login")
 def dev_login(request: Request, response: Response):
-    host = request.client.host if request.client else ""
-    if not DEV_LOGIN or host not in ("127.0.0.1", "::1", "localhost"):
+    # Only from this machine directly: never through a tunnel (cloudflared, ngrok) or proxy,
+    # which also connect from 127.0.0.1 but add forwarding headers and a public Host.
+    if not DEV_LOGIN or not _is_direct_local(request):
         raise HTTPException(404)
+    ratelimit.hit(_client(request), "auth")
     user = _upsert_user("dev-local", "dev@localhost", "Local Developer", "")
     _start_session(response, request, user["id"])
     return {"ok": True}
@@ -163,7 +191,7 @@ def logout(response: Response, aurea_session: str | None = Cookie(default=None))
     if aurea_session and DATABASE_URL:
         with connection() as conn:
             conn.execute("DELETE FROM sessions WHERE token_hash = %s", (_hash(aurea_session),))
-    response.delete_cookie(SESSION_COOKIE, path="/", secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE)
+    clear_session_cookie(response)
     return {"ok": True}
 
 

@@ -1,0 +1,57 @@
+name: Security and guardrails
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # weekly, to catch new advisories
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aurea
+          POSTGRES_PASSWORD: aurea
+          POSTGRES_DB: aurea_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U aurea" --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - name: Red-team evals (rules)
+        run: uv run python -m guardrails.evals
+      - name: Tests
+        env:
+          TEST_DATABASE_URL: postgresql://aurea:aurea@localhost:5432/aurea_test
+          SECRET_KEY: ci-only-secret-key-that-is-long-enough-1234567890
+        run: uv run pytest tests -q
+      - name: Static checks
+        run: uvx ruff check --select F,E9 --exclude .venv .
+      - name: Dependency audit
+        run: |
+          uv export --no-hashes --format requirements-txt > /tmp/requirements.txt
+          uvx pip-audit -r /tmp/requirements.txt
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - name: Dependency audit
+        run: npm audit --audit-level=critical --omit=dev

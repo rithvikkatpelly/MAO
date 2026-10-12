@@ -100,6 +100,20 @@ export const visuals = {
   visualize: (body) => api("/api/visuals/visualize", { method: "POST", body }),
 };
 
+// Usage limits, data export, and account deletion (backend/api/account.py).
+export const account = {
+  usage: () => api("/api/account/usage"),
+  async export() {
+    const res = await fetch(`${API_BASE}/api/account/export`, { credentials: "include" });
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => ({}))).detail;
+      throw new ApiError(res.status, typeof detail === "string" ? detail : `Export failed (${res.status})`);
+    }
+    return res.blob();
+  },
+  remove: () => api("/api/account", { method: "DELETE", body: { confirm: "DELETE" } }),
+};
+
 // The slice of a project the AI helpers need.
 export function projectForAI(project) {
   return {

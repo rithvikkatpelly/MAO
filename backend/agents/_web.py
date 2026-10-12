@@ -8,11 +8,14 @@ from itertools import zip_longest
 
 from ddgs import DDGS
 
+from guardrails.untrusted import clean_sources, fence
+
 MAX_SOURCES = 5
+SEARCH_TIMEOUT = 10
 
 
 def _web(query: str, n: int) -> list[dict]:
-    with DDGS() as ddgs:
+    with DDGS(timeout=SEARCH_TIMEOUT) as ddgs:
         results = list(ddgs.text(query, max_results=n))
     return [
         {"title": r.get("title", ""), "url": r.get("href", ""), "date": "", "snippet": r.get("body", "")}
@@ -21,7 +24,7 @@ def _web(query: str, n: int) -> list[dict]:
 
 
 def _news(query: str, n: int) -> list[dict]:
-    with DDGS() as ddgs:
+    with DDGS(timeout=SEARCH_TIMEOUT) as ddgs:
         results = list(ddgs.news(query, max_results=n))
     return [
         {"title": r.get("title", ""), "url": r.get("url", ""), "date": r.get("date", ""), "snippet": r.get("body", "")}
@@ -45,14 +48,16 @@ def top_sources(query: str, n: int = MAX_SOURCES) -> list[dict]:
                 seen.add(item["url"])
                 merged.append(item)
 
+    merged = clean_sources(merged)  # http(s) only, blocked domains and injected instructions removed
     if not merged:
-        raise RuntimeError(f"web search returned no sources for: {query!r}")
+        raise RuntimeError(f"web search returned no usable sources for: {query!r}")
     return merged[:n]
 
 
 def format_sources(sources: list[dict]) -> str:
+    """Numbered sources for a prompt, fenced as untrusted web data."""
     lines = []
     for i, s in enumerate(sources, start=1):
         date = f" ({s['date'][:10]})" if s["date"] else ""
         lines.append(f"[{i}] {s['title']}{date}: {s['snippet'][:300]} <{s['url']}>")
-    return "\n".join(lines)
+    return fence("web_sources", "\n".join(lines))

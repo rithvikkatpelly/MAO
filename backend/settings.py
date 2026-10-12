@@ -51,3 +51,18 @@ APP_URL = os.getenv("APP_URL", ALLOWED_ORIGINS[0] if ALLOWED_ORIGINS else "http:
 # Encrypts stored social account tokens and signs OAuth state. Any long random string;
 # changing it disconnects every account. Generate: python -c "import secrets; print(secrets.token_urlsafe(48))"
 SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
+# The previous SECRET_KEY during a rotation: tokens and sign-in links made with it still work,
+# and every token is re-encrypted with the new key the next time it is refreshed.
+SECRET_KEY_PREVIOUS = os.getenv("SECRET_KEY_PREVIOUS", "").strip()
+
+for _name, _value in (("SECRET_KEY", SECRET_KEY), ("SECRET_KEY_PREVIOUS", SECRET_KEY_PREVIOUS)):
+    if _value and len(_value) < 32:
+        raise RuntimeError(
+            f"{_name} must be at least 32 characters. Generate one with: "
+            'python -c "import secrets; print(secrets.token_urlsafe(48))"'
+        )
+
+if COOKIE_SAMESITE not in ("lax", "strict", "none"):
+    raise RuntimeError("COOKIE_SAMESITE must be lax, strict, or none.")
+if COOKIE_SAMESITE == "none" and not COOKIE_SECURE:
+    raise RuntimeError("COOKIE_SAMESITE=none requires COOKIE_SECURE=true.")

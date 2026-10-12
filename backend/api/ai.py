@@ -7,12 +7,16 @@ example posts) and every string in the result is cleaned of em dashes and emojis
 from datetime import date, timedelta
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, StringConstraints, create_model
 
 from api.auth import current_user
 from api.profile import brand_profile_for
 from db import connection
+from guardrails.jobs import assist
+from guardrails.semantic import screen
+from guardrails.untrusted import fence
+from guardrails.validators import check_data, check_instruction
 from llm import invoke_structured
 from text_rules import STYLE_RULE, clean
 
@@ -59,13 +63,13 @@ def _voice(user_id) -> str:
     if recent:
         lines.append(
             "Already posted recently. Do not repeat these titles or hooks: "
-            + "; ".join(p["hook"] or p["title"] for p in recent[:10])
+            + fence("past_titles", "; ".join(p["hook"] or p["title"] for p in recent[:10]))
         )
     examples = profile.get("example_posts", [])
     if examples:
         lines.append(
             "Style reference, an earlier post by the creator. Match its voice and rhythm, "
-            "but never copy its sentences or claims:\n" + examples[0][:800]
+            "but never copy its sentences or claims:\n" + fence("example_post", examples[0][:800])
         )
     return "\n".join(lines)
 
@@ -82,14 +86,19 @@ def _project_text(p: ProjectIn) -> str:
         parts.append(f"Call to action: {p.cta}")
     if p.sources:
         parts.append("Sources: " + "; ".join(s.title for s in p.sources if s.title))
-    return "\n".join(parts)
+    # The post is the creator's content (and partly the web's): data to work from, not instructions.
+    return fence("post", check_data("\n".join(parts), "the post"))
+
+
+def _screen_post(p: ProjectIn, extra: str = "") -> None:
+    """Semantic safety check on the post the creator wants the AI to work on."""
+    parts = [p.title, p.idea, *(f"{s.headline}. {s.body}" for s in p.slides), p.caption, p.cta, extra]
+    screen("\n".join(x for x in parts if x), "post")
 
 
 def _run(schema, prompt: str, *, temperature: float = 0.5, max_tokens: int = 1200) -> dict:
-    try:
-        result = invoke_structured(schema, prompt + "\n\n" + STYLE_RULE, temperature=temperature, max_tokens=max_tokens)
-    except Exception as exc:  # model offline, timeout, unparseable twice
-        raise HTTPException(502, f"The AI engine could not finish: {exc}") from None
+    """One model call inside an assist() block, which turns failures into safe messages."""
+    result = invoke_structured(schema, prompt + "\n\n" + STYLE_RULE, temperature=temperature, max_tokens=max_tokens)
     return clean(result.model_dump())
 
 
@@ -121,17 +130,19 @@ class SlideAction(BaseModel):
 
 @router.post("/slide")
 def slide_action(body: SlideAction, user: dict = Depends(current_user)):
-    context = f"{_voice(user['id'])}\n\nThe whole post:\n{_project_text(body.project)}"
-    current = f"Headline: {body.slide.headline}\nBody: {body.slide.body}"
-    if body.action == "hooks":
-        prompt = (
-            f"{context}\n\nWrite 3 different scroll-stopping opening hooks (headlines) for this post. "
-            "Use different techniques: a specific number, a bold contrarian claim, and a painful problem. "
-            f"Each under 10 words.\n\nCurrent hook: {body.slide.headline}"
-        )
-        return _run(HookOptions, prompt, temperature=0.8, max_tokens=300)
-    prompt = f"{context}\n\nThis is the {body.position} slide.\n{current}\n\n{_ACTIONS[body.action]}"
-    return _run(SlideCopy, prompt, temperature=0.6, max_tokens=300)
+    with assist(user["id"], "ai.slide"):
+        _screen_post(body.project, f"{body.slide.headline}. {body.slide.body}")
+        context = f"{_voice(user['id'])}\n\nThe whole post:\n{_project_text(body.project)}"
+        current = fence("slide", check_data(f"Headline: {body.slide.headline}\nBody: {body.slide.body}", "the slide"))
+        if body.action == "hooks":
+            prompt = (
+                f"{context}\n\nWrite 3 different scroll-stopping opening hooks (headlines) for this post. "
+                "Use different techniques: a specific number, a bold contrarian claim, and a painful problem. "
+                f"Each under 10 words.\n\nCurrent hook:\n{current}"
+            )
+            return _run(HookOptions, prompt, temperature=0.8, max_tokens=300)
+        prompt = f"{context}\n\nThis is the {body.position} slide.\n{current}\n\n{_ACTIONS[body.action]}"
+        return _run(SlideCopy, prompt, temperature=0.6, max_tokens=300)
 
 
 # ---- repurpose into other formats -----------------------------------------------------
@@ -193,11 +204,13 @@ class Repurpose(BaseModel):
 @router.post("/repurpose")
 def repurpose(body: Repurpose, user: dict = Depends(current_user)):
     schema, instruction = FORMATS[body.format]
-    prompt = (
-        f"{_voice(user['id'])}\n\nSource content:\n{_project_text(body.project)}\n\n"
-        f"Turn this into {instruction} Keep every fact from the source and invent nothing."
-    )
-    return {"format": body.format, "data": _run(schema, prompt, max_tokens=1600)}
+    with assist(user["id"], "ai.repurpose"):
+        _screen_post(body.project)
+        prompt = (
+            f"{_voice(user['id'])}\n\nSource content:\n{_project_text(body.project)}\n\n"
+            f"Turn this into {instruction} Keep every fact from the source and invent nothing."
+        )
+        return {"format": body.format, "data": _run(schema, prompt, max_tokens=1600)}
 
 
 # ---- captions per platform ------------------------------------------------------------
@@ -226,12 +239,14 @@ def captions(body: CaptionsRequest, user: dict = Depends(current_user)):
     platforms = list(dict.fromkeys(body.platforms))
     schema = create_model("PlatformCaptions", **{p: (Caption, ...) for p in platforms})
     rules = "\n".join(f"- {PLATFORM_RULES[p]}" for p in platforms)
-    prompt = (
-        f"{_voice(user['id'])}\n\nThe post:\n{_project_text(body.project)}\n\n"
-        f"Write a separate caption for each platform, following each platform's rules:\n{rules}\n"
-        "Return hashtags without the # symbol, separately from the caption text."
-    )
-    result = _run(schema, prompt, max_tokens=1800)
+    with assist(user["id"], "ai.captions"):
+        _screen_post(body.project)
+        prompt = (
+            f"{_voice(user['id'])}\n\nThe post:\n{_project_text(body.project)}\n\n"
+            f"Write a separate caption for each platform, following each platform's rules:\n{rules}\n"
+            "Return hashtags without the # symbol, separately from the caption text."
+        )
+        result = _run(schema, prompt, max_tokens=1800)
     if "x" in result:  # hard limit including hashtags, whatever the model did
         cap = result["x"]
         cap["hashtags"] = cap["hashtags"][:2]
@@ -270,6 +285,12 @@ class WeekPlanRequest(BaseModel):
 
 @router.post("/plan-week")
 def plan_week(body: WeekPlanRequest, user: dict = Depends(current_user)):
+    notes = check_instruction(body.notes, "notes", max_chars=300)
+    with assist(user["id"], "ai.plan_week"):
+        return _plan_week(body, notes, user)
+
+
+def _plan_week(body: WeekPlanRequest, notes: str, user: dict) -> dict:
     with connection() as conn:
         series = [
             r["data"]
@@ -278,19 +299,20 @@ def plan_week(body: WeekPlanRequest, user: dict = Depends(current_user)):
             ).fetchall()
             if r["data"].get("active", True)
         ]
+    screen("\n".join([notes, *(f"{x.get('name', '')}: {x.get('prompt', '')}" for x in series)]), "plan")
     weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     calendar = ", ".join(
         f"day {i} is {weekdays[(body.start + timedelta(days=i)).weekday()]}" for i in range(body.days)
     )
-    recurring = "; ".join(f"'{s['name']}' every {weekdays[s['weekday']]}: {s.get('prompt', '')}" for s in series)
+    recurring = fence("series", "; ".join(f"'{s['name']}' every {weekdays[s['weekday']]}: {s.get('prompt', '')}" for s in series))
     schema = create_model(
         "WeekPlan", items=(list[PlanItem], Field(min_length=1, max_length=body.posts))
     )
     prompt = (
         f"{_voice(user['id'])}\n\nPlan {body.posts} posts over {body.days} days ({calendar}). "
         "Spread them out, vary the formats, and mix the content types the creator posts. "
-        + (f"Include one post for each recurring series on its weekday: {recurring}. " if recurring else "")
-        + (f"Notes from the creator: {body.notes}. " if body.notes else "")
+        + (f"Include one post for each recurring series on its weekday: {recurring}. " if series else "")
+        + (f"Notes from the creator: {notes}. " if notes else "")
         + "Each item needs a specific, post-ready title and a one sentence angle."
     )
     result = _run(schema, prompt, temperature=0.7, max_tokens=1500)

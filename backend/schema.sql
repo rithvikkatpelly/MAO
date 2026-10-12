@@ -94,3 +94,84 @@ CREATE TABLE IF NOT EXISTS publish_media (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS publish_media_created_idx ON publish_media (created_at);
+
+-- ---- guardrails (backend/guardrails, docs/guardrails.md) ------------------------------
+
+-- Daily usage per creator and bucket (design, research, assist, chat, trend, upload, publish).
+CREATE TABLE IF NOT EXISTS usage_counters (
+    user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    bucket  TEXT NOT NULL,
+    day     DATE NOT NULL,
+    used    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, bucket, day)
+);
+
+-- AI calls and guardrail decisions. Sizes, hashes and verdicts only, never the text.
+CREATE TABLE IF NOT EXISTS ai_audit (
+    id            BIGSERIAL PRIMARY KEY,
+    user_id       UUID REFERENCES users (id) ON DELETE SET NULL,
+    endpoint      TEXT NOT NULL DEFAULT '',
+    kind          TEXT NOT NULL,
+    outcome       TEXT NOT NULL,
+    model         TEXT NOT NULL DEFAULT '',
+    prompt_sha256 TEXT NOT NULL DEFAULT '',
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    latency_ms    INTEGER NOT NULL DEFAULT 0,
+    detail        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ai_audit_created_idx ON ai_audit (created_at);
+CREATE INDEX IF NOT EXISTS ai_audit_user_idx ON ai_audit (user_id, created_at DESC);
+
+-- Kill switches (python -m guardrails.flags).
+CREATE TABLE IF NOT EXISTS app_flags (
+    name       TEXT PRIMARY KEY,
+    enabled    BOOLEAN NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Pipeline runs saved in the local LangGraph store, so they can be purged on schedule
+-- and when an account is deleted.
+CREATE TABLE IF NOT EXISTS pipeline_threads (
+    thread_id  TEXT PRIMARY KEY,
+    user_id    UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS pipeline_threads_created_idx ON pipeline_threads (created_at);
+
+-- Chat conversations. Each keeps at most CONTEXT_WINDOW_TOKENS of history.
+CREATE TABLE IF NOT EXISTS chat_conversations (
+    id         TEXT PRIMARY KEY,
+    user_id    UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    title      TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id              BIGSERIAL PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES chat_conversations (id) ON DELETE CASCADE,
+    user_id         UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    role            TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content         TEXT NOT NULL,
+    tokens          INTEGER NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_messages_conversation_idx ON chat_messages (conversation_id, id);
+
+-- Instagram sign-in links are single use.
+CREATE TABLE IF NOT EXISTS oauth_nonces (
+    nonce_hash TEXT PRIMARY KEY,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+-- Publish requests, keyed by a client-generated id so a retry never posts twice.
+CREATE TABLE IF NOT EXISTS publish_log (
+    user_id    UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    request_id TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    result     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, request_id)
+);

@@ -18,6 +18,8 @@ export default function PipelineProgress({ title, subtitle, steps, progress, sta
   }, []);
 
   const done = steps.filter((s) => progress[s.node]?.status === "done").length;
+  // Other creators' generations go first when the AI engine is busy; the server reports our place.
+  const queued = progress.queue?.status === "running" && !steps.some((s) => progress[s.node]);
   const running = steps.filter((s) => progress[s.node]?.status === "running").length;
   const percent = Math.round(((done + running * 0.5) / steps.length) * 100);
 
@@ -25,6 +27,11 @@ export default function PipelineProgress({ title, subtitle, steps, progress, sta
     <div className="animate-fade-in">
       <h1 className="text-2xl font-semibold tracking-tight text-ink">{title}</h1>
       <p className="mt-1 text-sm text-muted">{subtitle}</p>
+      {queued && (
+        <p className="mt-3 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <Loader2 size={14} className="animate-spin" /> {progress.queue.detail ?? "Waiting for the AI engine"}
+        </p>
+      )}
 
       <div className="card mt-8 flex flex-col items-center gap-10 p-8 sm:flex-row sm:items-start">
         <div className="relative h-32 w-32 shrink-0">

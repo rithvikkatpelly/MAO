@@ -3,7 +3,9 @@
 from langchain_core.tools import tool
 
 from agents._web import top_sources
-from llm import get_llm
+from guardrails.grounding import verify_citations
+from guardrails.untrusted import unfence
+from llm import invoke_text
 
 
 @tool
@@ -19,12 +21,13 @@ def search_sources(query: str) -> list[dict]:
 
 
 @tool
-def extract_key_facts(idea: str, sources_text: str) -> str:
+def extract_key_facts(idea: str, sources_text: str, source_count: int) -> str:
     """Distill numbered sources into a short brief of key, citable facts.
 
     Args:
         idea: The content idea the facts should support.
         sources_text: The numbered sources (title, snippet, url) to draw from.
+        source_count: How many sources there are; bullets citing any other number are dropped.
     """
     prompt = (
         f"Content idea: {idea}\n\nSources:\n{sources_text}\n\n"
@@ -32,7 +35,7 @@ def extract_key_facts(idea: str, sources_text: str) -> str:
         "Each bullet: one sentence under 25 words, ending with its source number like [2]. "
         "Use only what the sources say."
     )
-    return get_llm(temperature=0.2, max_tokens=350).invoke(prompt).content
+    return verify_citations(invoke_text(prompt, temperature=0.2, max_tokens=350), source_count, unfence(sources_text))
 
 
 DEEP_RESEARCH_TOOLS = [search_sources, extract_key_facts]

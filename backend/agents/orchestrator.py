@@ -35,6 +35,8 @@ from agents.deep_research_tools import extract_key_facts
 from agents.deep_research_tools import search_sources as search_sources_deep
 from agents.design_tools import render_html, select_design
 from agents.research_tools import search_sources
+from guardrails.grounding import review_copy
+from guardrails.untrusted import fence
 from llm import invoke_structured
 from platform_specs import get_platform_spec
 
@@ -84,7 +86,7 @@ def research_node(state: AureaState) -> dict:
     recent = (state.get("brand_profile") or {}).get("recent_posts", [])
     covered = (
         "\n\nThe creator already posted these. Propose new angles, not repeats:\n"
-        + "\n".join(f"- {p['title']}" for p in recent[:12])
+        + fence("past_titles", "\n".join(f"- {p['title']}" for p in recent[:12]))
         if recent
         else ""
     )
@@ -117,11 +119,12 @@ def deep_research_node(state: AureaState) -> dict:
     niche = ((state.get("brand_profile") or {}).get("voice") or {}).get("niche", "")
     sources = search_sources_deep.invoke({"query": f"{idea['title']} {niche}".strip()})
     facts = extract_key_facts.invoke(
-        {"idea": f"{idea['title']}: {idea['angle']}", "sources_text": format_sources(sources)}
+        {"idea": f"{idea['title']}: {idea['angle']}", "sources_text": format_sources(sources), "source_count": len(sources)}
     )
     return {
         "research_context": facts,
-        "sources": [{"title": s["title"], "url": s["url"], "date": s.get("date", "")} for s in sources],
+        # snippets stay in the run (not in the response) for the grounding review
+        "sources": [{"title": s["title"], "url": s["url"], "date": s.get("date", ""), "snippet": s.get("snippet", "")} for s in sources],
     }
 
 
@@ -166,15 +169,16 @@ def content_node(state: AureaState) -> dict:
     idea = state["selected_idea"]
     slide_count, fmt = _output_spec(state)
     brand = state["brand_context"]
+    # The creator's profile and examples are their own words: data to follow for voice, never instructions.
     brand_notes = (
         f"Format requirements: exactly {slide_count} slide(s), format={fmt}.\n\n"
-        f"{json.dumps(brand, indent=2)}"
+        + fence("creator_profile", json.dumps(brand, indent=2))
     )
 
     draft: CarouselContent = generate_carousel_content.invoke(
         {
             "idea": f"{idea['title']}: {idea['angle']}",
-            "research_notes": state["research_context"],
+            "research_notes": fence("research_facts", state["research_context"]),
             "brand_notes": brand_notes,
             "platform": state["platform"],
             "slide_count": slide_count,
@@ -193,6 +197,14 @@ def content_node(state: AureaState) -> dict:
     )
     final = review.revised if review.revised else draft
 
+    sources = state.get("sources") or []
+    review_copy(
+        [s.headline + " " + s.body for s in final.slides] + [final.caption, final.cta],
+        # numbers are checked against what the sources say, not against the model's own notes
+        evidence=f"{idea['title']} {idea['angle']}\n" + "\n".join(f"{s['title']} {s.get('snippet', '')}" for s in sources),
+        sources=[s.get("snippet", "") for s in sources],
+        examples=brand.get("example_posts_in_their_voice", []),
+    )
     return {"carousel": final.model_dump()}
 
 

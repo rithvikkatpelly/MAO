@@ -9,6 +9,7 @@ import { instagram } from "../../lib/api";
 import { captionFor, renderJpegs } from "../../lib/export";
 import { IG_LIMITS, countHashtags, instagramIssues, startInstagramConnect } from "../../lib/instagram";
 import { loadItems } from "../../lib/items";
+import { safeUrl } from "../../lib/url";
 
 function Thumbs({ project, brand, count }) {
   return (
@@ -29,6 +30,8 @@ function PublishDialog({ project, brand, onClose, onPublished }) {
   const [step, setStep] = useState(null); // progress text while posting
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
+  // One id per post, so a retry after a dropped response never publishes twice.
+  const [requestId] = useState(() => crypto.randomUUID());
 
   const count = Math.min(project.slides.length, IG_LIMITS.images);
   const issues = useMemo(() => instagramIssues(project, caption), [project, caption]);
@@ -60,7 +63,7 @@ function PublishDialog({ project, brand, onClose, onPublished }) {
         media.push((await instagram.uploadImage(data)).token);
       }
       setStep("Publishing to Instagram");
-      const res = await instagram.publish({ media, caption, project_id: project.id, title: project.title });
+      const res = await instagram.publish({ request_id: requestId, media, caption, project_id: project.id, title: project.title });
       setResult(res);
       onPublished(res);
       loadItems("metric", { force: true });
@@ -89,8 +92,8 @@ function PublishDialog({ project, brand, onClose, onPublished }) {
         <p className="mt-3 text-base font-semibold text-ink">Posted to @{result.username}</p>
         <p className="mt-1 text-sm text-muted">It is live on Instagram and logged on Insights, where you can add its results later.</p>
         <div className="mt-6 flex justify-center gap-2">
-          {result.permalink && (
-            <a href={result.permalink} target="_blank" rel="noreferrer" className="btn btn-primary">
+          {safeUrl(result.permalink) && (
+            <a href={safeUrl(result.permalink)} target="_blank" rel="noreferrer" className="btn btn-primary">
               View on Instagram <ExternalLink size={14} />
             </a>
           )}

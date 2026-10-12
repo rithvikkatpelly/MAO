@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field, StringConstraints
 
 from api.auth import current_user
 from db import connection
+from guardrails.untrusted import is_safe_url
+from guardrails.validators import check_profile_text
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 
@@ -48,6 +50,40 @@ class Social(BaseModel):
     example_posts: list[Annotated[str, StringConstraints(max_length=2000)]] = Field(default_factory=list, max_length=3)
 
 
+def _check_social(social: Social) -> Social:
+    """Everything here goes into AI prompts later, so it is checked once, on save."""
+    fields = {
+        "role": social.role,
+        "niche": social.niche,
+        "audience": social.audience,
+        "tone": social.tone,
+        "frequency": social.frequency,
+        "primary platform": social.primary_platform,
+    }
+    clean = {k.replace(" ", "_"): check_profile_text(v, k) for k, v in fields.items()}
+    if social.profile_url and not is_safe_url(social.profile_url):
+        clean["profile_url"] = ""
+    return social.model_copy(
+        update={
+            **clean,
+            "avoid_words": [check_profile_text(w, "words to avoid") for w in social.avoid_words],
+            "goals": [check_profile_text(g, "goals") for g in social.goals],
+            "content_types": [check_profile_text(c, "content types") for c in social.content_types],
+            "example_posts": [check_profile_text(e, "example post") for e in social.example_posts],
+        }
+    )
+
+
+def _check_brand(brand: Brand) -> Brand:
+    return brand.model_copy(
+        update={
+            "name": check_profile_text(brand.name, "brand name"),
+            "handle": check_profile_text(brand.handle, "handle"),
+            "hashtags": [check_profile_text(h, "hashtags") for h in brand.hashtags],
+        }
+    )
+
+
 class ProfileUpdate(BaseModel):
     brand: Brand | None = None
     social: Social | None = None
@@ -56,6 +92,10 @@ class ProfileUpdate(BaseModel):
 
 @router.put("")
 def update_profile(body: ProfileUpdate, user: dict = Depends(current_user)):
+    if body.social:
+        body = body.model_copy(update={"social": _check_social(body.social)})
+    if body.brand:
+        body = body.model_copy(update={"brand": _check_brand(body.brand)})
     with connection() as conn:
         conn.execute(
             """

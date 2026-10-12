@@ -22,7 +22,9 @@ Publishing:
 import base64
 import hashlib
 import hmac
+import logging
 import secrets
+import threading
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -30,7 +32,7 @@ from typing import Annotated
 from urllib.parse import urlencode
 
 import requests
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import RedirectResponse
 from psycopg.types.json import Jsonb
@@ -39,6 +41,10 @@ from pydantic import BaseModel, Field, StringConstraints
 from api.auth import current_user
 from api.items import _upsert_many, _validate
 from db import connection
+from guardrails import config, flags, quota, ratelimit
+from guardrails.errors import GuardrailViolation
+from guardrails.gate import InFlight
+from guardrails.validators import check_publishable
 from settings import (
     APP_URL,
     INSTAGRAM_APP_ID,
@@ -46,9 +52,11 @@ from settings import (
     INSTAGRAM_GRAPH_VERSION,
     PUBLIC_API_URL,
     SECRET_KEY,
+    SECRET_KEY_PREVIOUS,
 )
 
 router = APIRouter(prefix="/api/instagram", tags=["instagram"])
+log = logging.getLogger("aurea.instagram")
 
 PLATFORM = "instagram"
 SCOPES = "instagram_business_basic,instagram_business_content_publish"
@@ -95,13 +103,20 @@ def _redirect_uri() -> str:
     return f"{PUBLIC_API_URL}/api/instagram/callback"
 
 
-def _fernet() -> Fernet:
-    key = hashlib.sha256(f"aurea-social-tokens:{SECRET_KEY}".encode()).digest()
-    return Fernet(base64.urlsafe_b64encode(key))
+def _keys() -> list[str]:
+    """The current SECRET_KEY first, then the previous one during a rotation."""
+    return [k for k in (SECRET_KEY, SECRET_KEY_PREVIOUS) if k]
 
 
-def _sign(message: str) -> str:
-    return hmac.new(f"aurea-oauth-state:{SECRET_KEY}".encode(), message.encode(), hashlib.sha256).hexdigest()
+def _fernet() -> MultiFernet:
+    """Encrypts with the current key; decrypts with the current or the previous one."""
+    return MultiFernet(
+        [Fernet(base64.urlsafe_b64encode(hashlib.sha256(f"aurea-social-tokens:{k}".encode()).digest())) for k in _keys()]
+    )
+
+
+def _sign(message: str, key: str = "") -> str:
+    return hmac.new(f"aurea-oauth-state:{key or SECRET_KEY}".encode(), message.encode(), hashlib.sha256).hexdigest()
 
 
 def _make_state(user_id) -> str:
@@ -113,12 +128,20 @@ def _check_state(state: str, user_id) -> None:
     message, _, signature = state.rpartition(".")
     owner, _, rest = message.partition(".")
     expires = rest.partition(".")[0]
-    if not (message and hmac.compare_digest(_sign(message), signature)):
+    if not (message and any(hmac.compare_digest(_sign(message, k), signature) for k in _keys())):
         raise HTTPException(400, "This Instagram sign-in link is not valid. Start again from Connections.")
     if owner != str(user_id):
         raise HTTPException(403, "This Instagram sign-in was started from a different Aurea account.")
     if not expires.isdigit() or int(expires) < time.time():
         raise HTTPException(400, "This Instagram sign-in took too long. Start again from Connections.")
+    # Single use: a sign-in link that was already finished cannot be replayed.
+    with connection() as conn:
+        used = conn.execute(
+            "INSERT INTO oauth_nonces (nonce_hash, expires_at) VALUES (%s, to_timestamp(%s)) ON CONFLICT DO NOTHING RETURNING 1",
+            (hashlib.sha256(message.encode()).hexdigest(), int(expires)),
+        ).fetchone()
+    if not used:
+        raise HTTPException(400, "This Instagram sign-in link was already used. Start again from Connections.")
 
 
 # ---- Graph API ------------------------------------------------------------------------
@@ -133,8 +156,9 @@ class GraphError(Exception):
 def _graph(method: str, url: str, **kwargs) -> dict:
     try:
         res = requests.request(method, url, timeout=30, **kwargs)
-    except requests.RequestException as exc:
-        raise GraphError(f"Could not reach Instagram: {exc}") from None
+    except requests.RequestException:
+        log.warning("Instagram request failed", exc_info=True)
+        raise GraphError("Could not reach Instagram. Try again in a moment.") from None
     try:
         data = res.json()
     except ValueError:
@@ -216,7 +240,14 @@ def _token_for(user_id) -> tuple[dict, str]:
     if not row:
         raise HTTPException(409, "Connect an Instagram account first.")
     try:
-        token = _fernet().decrypt(row["access_token"].encode()).decode()
+        fernet = _fernet()
+        token = fernet.decrypt(row["access_token"].encode()).decode()
+        if SECRET_KEY_PREVIOUS:  # move tokens made with the previous key onto the current one
+            with connection() as conn:
+                conn.execute(
+                    "UPDATE social_accounts SET access_token = %s WHERE user_id = %s AND platform = %s",
+                    (fernet.rotate(row["access_token"].encode()).decode(), user_id, PLATFORM),
+                )
     except InvalidToken:
         _delete_account(user_id)
         raise HTTPException(401, "The saved Instagram sign-in can no longer be read. Connect the account again.") from None
@@ -270,12 +301,16 @@ def connect_url(user: dict = Depends(current_user)):
 
 
 @router.get("/callback", include_in_schema=False)
-def callback(code: str = "", state: str = "", error: str = "", error_description: str = ""):
-    """Instagram's redirect target. Hands the code to the web app, which finishes the link."""
-    if code:
+def callback(code: str = "", state: str = "", error: str = "", error_reason: str = ""):
+    """Instagram's redirect target. Hands the code to the web app, which finishes the link.
+    Errors are passed on as a fixed code, never as free text, so a crafted link cannot put
+    its own message on the Connections page."""
+    if code and len(code) <= 2048 and len(state) <= 300:
         query = {"instagram_code": code.removesuffix("#_"), "state": state}
+    elif error == "access_denied" or error_reason == "user_denied":
+        query = {"instagram_error": "denied"}
     else:
-        query = {"instagram_error": error_description or error or "Instagram did not return a sign-in code."}
+        query = {"instagram_error": "failed"}
     return RedirectResponse(f"{APP_URL}/app/connections?{urlencode(query)}", status_code=303)
 
 
@@ -332,14 +367,21 @@ class MediaUpload(BaseModel):
 
 @router.post("/media")
 def upload_media(body: MediaUpload, user: dict = Depends(current_user)):
+    flags.require("publishing")
+    ratelimit.hit(user["id"], "upload")
     raw = base64.b64decode(body.data.split(",", 1)[1])
     if len(raw) > MAX_IMAGE_BYTES:
         raise HTTPException(413, "Each image must be 8 MB or smaller.")
-    if not raw.startswith(b"\xff\xd8\xff"):
+    if not raw.startswith(b"\xff\xd8\xff") or not raw.rstrip(b"\x00").endswith(b"\xff\xd9"):
         raise HTTPException(422, "Instagram only accepts JPEG images.")
-    token = secrets.token_urlsafe(32)
     with connection() as conn:
         conn.execute(f"DELETE FROM publish_media WHERE created_at < now() - interval '{MEDIA_TTL}'")
+        staged = conn.execute("SELECT count(*) AS n FROM publish_media WHERE user_id = %s", (user["id"],)).fetchone()["n"]
+    if staged >= config.MAX_STAGED_MEDIA_PER_USER:
+        raise GuardrailViolation(429, "Too many images are waiting to be posted. Publish or wait a day, then try again.", "staged_media")
+    quota.consume(user["id"], "upload")
+    token = secrets.token_urlsafe(32)
+    with connection() as conn:
         conn.execute("INSERT INTO publish_media (token, user_id, data) VALUES (%s, %s, %s)", (token, user["id"], raw))
     return {"token": token}
 
@@ -360,6 +402,8 @@ def serve_media(token: MediaToken):
 
 
 class PublishRequest(BaseModel):
+    # Generated by the browser once per post; the same id never publishes twice.
+    request_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9-]{16,64}$")]
     media: list[MediaToken] = Field(min_length=1, max_length=MAX_CAROUSEL)
     caption: Annotated[str, StringConstraints(max_length=MAX_CAPTION)] = ""
     project_id: Annotated[str, StringConstraints(max_length=120)] = ""
@@ -384,9 +428,69 @@ def _wait_until_ready(container_ids: list[str], token: str) -> None:
             time.sleep(1.5)
 
 
+_PUBLISHING = threading.BoundedSemaphore(config.PUBLISHES_IN_FLIGHT)  # server threads spent waiting on Instagram
+_PUBLISHING_PER_USER = InFlight(1, "A post is already being published. Wait for it to finish.")
+
+
+def _claim_request(user_id, request_id: str) -> dict | None:
+    """Records the publish request. Returns the earlier result if this id already posted."""
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT status, result FROM publish_log WHERE user_id = %s AND request_id = %s FOR UPDATE", (user_id, request_id)
+        ).fetchone()
+        if row and row["status"] == "done":
+            return row["result"]
+        if row and row["status"] == "running":
+            raise HTTPException(409, "This post is already being published.")
+        conn.execute(
+            """
+            INSERT INTO publish_log (user_id, request_id, status) VALUES (%s, %s, 'running')
+            ON CONFLICT (user_id, request_id) DO UPDATE SET status = 'running', updated_at = now()
+            """,
+            (user_id, request_id),
+        )
+    return None
+
+
+def _finish_request(user_id, request_id: str, status: str, result: dict | None = None) -> None:
+    with connection() as conn:
+        conn.execute(
+            "UPDATE publish_log SET status = %s, result = %s, updated_at = now() WHERE user_id = %s AND request_id = %s",
+            (status, Jsonb(result or {}), user_id, request_id),
+        )
+
+
 @router.post("/publish")
 def publish(body: PublishRequest, user: dict = Depends(current_user)):
     _require_configured()
+    flags.require("publishing")
+    ratelimit.hit(user["id"], "publish")
+    check_publishable(f"{body.title}\n{body.caption}")
+    with _PUBLISHING_PER_USER.hold(user["id"]):
+        earlier = _claim_request(user["id"], body.request_id)
+        if earlier:
+            return earlier  # a retry of a post that already went out
+        if not _PUBLISHING.acquire(timeout=30):
+            _finish_request(user["id"], body.request_id, "failed")
+            raise GuardrailViolation(503, "Several posts are being published right now. Try again in a minute.", "publish_busy")
+        ok = False
+        try:
+            charge = quota.consume(user["id"], "publish")
+            try:
+                result = _publish(body, user)
+                ok = True
+            finally:
+                if not ok:
+                    charge.refund()
+        finally:
+            _PUBLISHING.release()
+            if not ok:
+                _finish_request(user["id"], body.request_id, "failed")
+        _finish_request(user["id"], body.request_id, "done", result)
+        return result
+
+
+def _publish(body: PublishRequest, user: dict) -> dict:
     with connection() as conn:
         owned = conn.execute(
             "SELECT token FROM publish_media WHERE user_id = %s AND token = ANY(%s)", (user["id"], body.media)

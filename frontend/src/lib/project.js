@@ -75,6 +75,7 @@ export function projectFromResult({ result, idea, topic, kind, size, brand, temp
     cta: result.cta,
     sources: result.sources ?? [],
     source: { topic, idea },
+    aiWarnings: result.warnings ?? [],
   });
 }
 
@@ -93,6 +94,7 @@ export function textProjectFromResult({ result, idea, topic, format, output, bra
       cta: result.cta,
       sources: result.sources ?? [],
       source: { topic, idea },
+      aiWarnings: result.warnings ?? [],
     }),
     textFormat: format,
     outputs: { [format]: output },
@@ -128,6 +130,7 @@ export function studioProjectFromResult({ result, kind, brand, template, topic, 
     sources: result.sources ?? [],
     // The pasted text stays with the project so "Rewrite" can rebuild the diagram from all of it.
     source: { topic, idea: idea ?? null, ...(text ? { text } : {}) },
+    aiWarnings: result.warnings ?? [],
   });
 }
 

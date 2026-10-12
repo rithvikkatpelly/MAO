@@ -9,15 +9,12 @@ POST /generate streams progress (SSE, same event shape as the carousel pipeline)
 POST /visualize turns any text into one diagram (the editor's "Visualize" and "Regenerate").
 """
 
-import json
-import queue
 import re
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, StringConstraints
 
 from agents._web import format_sources, top_sources
@@ -32,7 +29,12 @@ from agents.visual_tools import (
 )
 from api.ai import _voice
 from api.auth import current_user
-from runtime import pipeline_lock
+from guardrails.errors import GuardrailViolation
+from guardrails.grounding import review_copy
+from guardrails.jobs import admit, assist, stream_job
+from guardrails.semantic import screen
+from guardrails.untrusted import fence
+from guardrails.validators import check_data, check_instruction
 from text_rules import clean
 
 router = APIRouter(prefix="/api/visuals", tags=["visuals"])
@@ -54,22 +56,31 @@ class GenerateRequest(BaseModel):
     density: Literal["visual", "balanced", "text"] = "balanced"
 
 
-def _sse(payload: dict) -> str:
-    return f"data: {json.dumps(payload)}\n\n"
+def _validated(req: GenerateRequest) -> GenerateRequest:
+    """Topic and idea are instructions; pasted text is data (instruction-like passages removed)."""
+    idea = None
+    if req.idea:
+        idea = IdeaIn(title=check_instruction(req.idea.title, "idea"), angle=check_instruction(req.idea.angle, "idea"))
+    return req.model_copy(update={"topic": check_instruction(req.topic, "topic"), "idea": idea})
 
 
 def _generate(req: GenerateRequest, user_id, emit: Callable[..., None]) -> dict:
     voice = _voice(user_id)
-    brief = req.topic or (req.idea.title if req.idea else "") or req.text[:300]
+    text = check_data(req.text, "your pasted text").strip()  # inside the run, so removals become warnings
+    brief = req.topic or (req.idea.title if req.idea else "") or text[:300]
     if req.idea and req.idea.title:
         brief = f"{req.idea.title}: {req.idea.angle}" + (f" (topic: {req.topic})" if req.topic else "")
 
+    emit("safety", "running")
+    screen(f"{brief}\n{text[:3000]}", "request")  # before any web search or generation
+    emit("safety", "done")
+
     emit("research", "running")
-    if req.text.strip():
-        facts, sources = req.text.strip(), []
+    if text:
+        facts, sources = fence("pasted_text", text), []
     else:
         if not brief.strip():
-            raise ValueError("Add a topic or paste some text first.")
+            raise GuardrailViolation(422, "Add a topic or paste some text first.", "empty")
         sources = top_sources(req.idea.title if req.idea and req.idea.title else brief)
         facts = format_sources(sources)
     emit("research", "done")
@@ -98,6 +109,8 @@ def _generate(req: GenerateRequest, user_id, emit: Callable[..., None]) -> dict:
             else:
                 avoid = [o["headline"] for o in slides if o is not s and o["role"] not in ("title", "summary", "cta")]
                 s["visual"] = build_visual(s["visual"], f"{s['headline']}. {s['body']}", facts, voice, avoid)
+        except HTTPException:
+            raise  # a guardrail stopped the run (budget, deadline, policy, kill switch)
         except Exception:
             s["visual"] = None  # the slide keeps its text; the editor can visualize it later
     for s in slides:
@@ -116,51 +129,27 @@ def _generate(req: GenerateRequest, user_id, emit: Callable[..., None]) -> dict:
         }
     )
     result["sources"] = [{"title": s["title"], "url": s["url"], "date": s.get("date", "")} for s in sources]
+    review_copy(
+        [f"{s['headline']} {s['body']} {s.get('notes', '')}" for s in result["slides"]] + [result["caption"]],
+        evidence=f"{brief}\n{facts}",
+        sources=[s.get("snippet", "") for s in sources],
+        examples=[],
+    )
     emit("review", "done")
     return result
 
 
-def _worker(req: GenerateRequest, user_id, out: queue.Queue, cancelled: threading.Event) -> None:
-    def emit(node: str, status: str, detail: str = "") -> None:
-        if cancelled.is_set():
-            raise RuntimeError("cancelled")
-        out.put({"type": "step", "node": node, "status": status, **({"detail": detail} if detail else {})})
-
-    try:
-        out.put({"type": "result", "data": _generate(req, user_id, emit)})
-    except Exception as exc:
-        if not cancelled.is_set():
-            out.put({"type": "error", "message": str(exc) or "Generation failed."})
-    finally:
-        out.put(None)
-        pipeline_lock.release()
-
-
-def _stream(req: GenerateRequest, user_id) -> Iterator[str]:
-    if not pipeline_lock.acquire(blocking=False):
-        yield _sse({"type": "error", "message": "Another generation is already running. Wait for it to finish, then try again."})
-        return
-    out: queue.Queue = queue.Queue()
-    cancelled = threading.Event()
-    try:
-        threading.Thread(target=_worker, args=(req, user_id, out, cancelled), daemon=True).start()
-    except Exception:
-        pipeline_lock.release()
-        raise
-    try:
-        while (item := out.get()) is not None:
-            yield _sse(item)
-    finally:
-        cancelled.set()  # client went away: the worker stops at its next step
-
-
 @router.post("/generate")
 def generate(req: GenerateRequest, user: dict = Depends(current_user)):
-    return StreamingResponse(
-        _stream(req, user["id"]),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    req = _validated(req)
+    if not (req.topic or req.text.strip() or (req.idea and req.idea.title)):
+        raise GuardrailViolation(422, "Add a topic or paste some text first.", "empty")
+    admission = admit(user["id"], "design", "visuals.generate")
+
+    def job(emit, _cancelled: threading.Event) -> dict:
+        return _generate(req, user["id"], emit)
+
+    return stream_job(job, admission)
 
 
 class VisualizeRequest(BaseModel):
@@ -171,10 +160,12 @@ class VisualizeRequest(BaseModel):
 
 @router.post("/visualize")
 def visualize(req: VisualizeRequest, user: dict = Depends(current_user)):
-    voice = _voice(user["id"])
-    facts = f"{req.text}\n{req.facts}"
-    try:
-        vtype = req.type or pick_type(req.text, voice)
-        return {"visual": build_visual(vtype, req.text, facts, voice)}
-    except Exception as exc:
-        raise HTTPException(502, f"Could not build the visual: {exc}") from None
+    with assist(user["id"], "visuals.visualize"):
+        text = check_data(req.text, "the text")
+        if len(text.strip()) < 3:
+            raise GuardrailViolation(422, "Add a little more text to visualize.", "empty")
+        screen(text, "text")
+        voice = _voice(user["id"])
+        facts = f"{text}\n{check_data(req.facts, 'the facts')}"
+        vtype = req.type or pick_type(text, voice)
+        return {"visual": build_visual(vtype, text, facts, voice)}

@@ -25,12 +25,21 @@ def _get_browser():
 
 def render_slides_to_pdf(html_pages: list[str], width: int, height: int) -> bytes:
     browser = _get_browser()
-    page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=2)
+    # Slides are self-contained and escaped, but the renderer still runs with no script and no
+    # network, so nothing in a slide could ever execute or reach another host.
+    context = browser.new_context(
+        viewport={"width": width, "height": height},
+        device_scale_factor=2,
+        java_script_enabled=False,
+        offline=True,
+    )
+    context.route("**/*", lambda route: route.abort())
+    page = context.new_page()
     try:
         images = []
-        for html_content in html_pages:
-            page.set_content(html_content, wait_until="networkidle")
-            images.append(page.screenshot(type="png"))
+        for html_content in html_pages[:20]:
+            page.set_content(html_content, wait_until="load", timeout=15_000)
+            images.append(page.screenshot(type="png", timeout=15_000))
     finally:
-        page.close()
+        context.close()
     return img2pdf.convert(images)

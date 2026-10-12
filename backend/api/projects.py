@@ -4,6 +4,7 @@ The editor owns the document shape; the server stores it as JSONB and only
 checks size, a few required fields, and ownership.
 """
 
+import re
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -13,10 +14,12 @@ from starlette.concurrency import run_in_threadpool
 
 from api.auth import current_user
 from db import connection
+from guardrails.untrusted import is_safe_url
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 ProjectId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9-]{8,64}$")]
+_IMAGE_DATA = re.compile(r"^data:image/(png|jpeg|webp|gif);base64,")
 MAX_PROJECT_BYTES = 8_000_000  # slides can carry photos and screenshots
 AUTO_VERSION_EVERY = "10 minutes"
 VERSIONS_KEPT = 50
@@ -34,6 +37,26 @@ class ProjectIn(BaseModel, extra="allow"):
     def _slides_for_visual_kinds(self):
         if self.kind != "text" and not self.slides:
             raise ValueError("visual projects need at least one slide")
+        return self
+
+    @model_validator(mode="after")
+    def _safe_links(self):
+        """Links must be http(s) and images must be inline pictures or https, so nothing
+        stored in a project can run script or load from an unexpected scheme."""
+        sources = getattr(self, "sources", None)
+        if isinstance(sources, list):
+            for src in sources:
+                if isinstance(src, dict) and src.get("url") and not is_safe_url(str(src["url"])):
+                    src["url"] = ""
+        def safe(value) -> bool:
+            return not isinstance(value, str) or not value or bool(_IMAGE_DATA.match(value)) or value.startswith("https://")
+
+        for slide in self.slides:
+            if not safe(slide.get("image")):
+                slide["image"] = ""
+            bg = slide.get("bg")
+            if isinstance(bg, dict) and not safe(bg.get("src")):
+                slide["bg"] = None
         return self
 
 

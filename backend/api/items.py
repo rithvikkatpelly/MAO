@@ -8,17 +8,20 @@
     metric     performance numbers for published posts (feeds the AI's previous_content)
 """
 
+import json
 import re
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, Field, StringConstraints, ValidationError
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from api.auth import current_user
-from api.profile import Brand
+from api.profile import Brand, _check_brand
 from db import connection
+from guardrails.untrusted import is_safe_url
+from guardrails.validators import check_profile_text
 
 router = APIRouter(prefix="/api/items", tags=["items"])
 
@@ -27,6 +30,15 @@ ItemId = Annotated[str, StringConstraints(pattern=ID_PATTERN)]
 Short = Annotated[str, StringConstraints(max_length=120)]
 Text = Annotated[str, StringConstraints(max_length=600)]
 DateStr = Annotated[str, StringConstraints(pattern=r"^(\d{4}-\d{2}-\d{2}.*)?$", max_length=40)]
+
+
+def _web_url(url: str) -> str:
+    """Only http(s) links are kept, so a stored link can never run script when clicked."""
+    return url if not url or is_safe_url(url) else ""
+
+
+Url500 = Annotated[str, StringConstraints(max_length=500), AfterValidator(_web_url)]
+Url600 = Annotated[str, StringConstraints(max_length=600), AfterValidator(_web_url)]
 Kind = Literal["carousel", "poster", "image", "thumbnail", "text", "deck", "infographic", ""]
 
 
@@ -76,7 +88,7 @@ class Metric(BaseModel):
     platform: Short = ""
     posted_at: DateStr = ""
     title: Annotated[str, StringConstraints(max_length=300)] = ""
-    url: Annotated[str, StringConstraints(max_length=500)] = ""
+    url: Url500 = ""
     project_id: Short = ""
     impressions: int = Field(default=0, ge=0)
     likes: int = Field(default=0, ge=0)
@@ -94,7 +106,7 @@ class ResearchIdea(BaseModel):
 
 class ResearchSource(BaseModel):
     title: Annotated[str, StringConstraints(max_length=300)] = ""
-    url: Annotated[str, StringConstraints(max_length=600)] = ""
+    url: Url600 = ""
     date: Annotated[str, StringConstraints(max_length=40)] = ""
 
 
@@ -152,9 +164,14 @@ def _spec(kind: str):
 def _validate(kind: str, raw: dict) -> dict:
     model, _, _ = _spec(kind)
     try:
-        return model.model_validate(raw).model_dump()
+        item = model.model_validate(raw)
     except ValidationError as exc:
         raise HTTPException(422, exc.errors(include_url=False, include_context=False, include_input=False)) from None
+    if kind == "series":  # series prompts go into the week planner's prompt
+        item = item.model_copy(update={"name": check_profile_text(item.name, "series name"), "prompt": check_profile_text(item.prompt, "series prompt")})
+    elif kind == "brand_kit":
+        item = _check_brand(item)
+    return item.model_dump()
 
 
 def _to_json(row: dict) -> dict:
@@ -215,8 +232,11 @@ class Bulk(BaseModel):
 @router.post("/{kind}/bulk")
 def save_items(kind: str, body: Bulk, user: dict = Depends(current_user)):
     """Create or update many items at once (metric imports, week plans, saved research ideas)."""
+    _, _, max_bytes = _spec(kind)
     pairs = []
     for raw in body.items:
+        if len(json.dumps(raw, separators=(",", ":"))) > max_bytes:  # the same cap as single saves
+            raise HTTPException(413, "One of these items is too large.")
         item_id = str(raw.get("id", ""))
         if not re.fullmatch(ID_PATTERN, item_id):
             raise HTTPException(422, "Every item needs a valid id.")
