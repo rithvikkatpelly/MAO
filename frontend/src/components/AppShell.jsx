@@ -6,7 +6,7 @@ import { Menu } from "./Menu";
 
 const NAV = [
   { to: "/app", label: "Projects", icon: LayoutGrid, end: true },
-  { to: "/app/new", label: "Create", icon: Plus },
+  { to: "/app/design/new", label: "Create", icon: Plus },
   { to: "/app/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/app/ideas", label: "Ideas", icon: Lightbulb },
   { to: "/app/insights", label: "Insights", icon: ChartColumn },

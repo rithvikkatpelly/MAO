@@ -26,6 +26,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
+      - name: Chromium for design exports
+        run: uv run playwright install --with-deps chromium
       - name: Red-team evals (rules)
         run: uv run python -m guardrails.evals
       - name: Tests

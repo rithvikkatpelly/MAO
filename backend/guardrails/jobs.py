@@ -71,13 +71,14 @@ def _sse(payload: dict) -> str:
 Emit = Callable[..., None]
 
 
-def _worker(job: Callable[[Emit, threading.Event], dict], admission: Admission, out: queue.Queue, cancelled: threading.Event) -> None:
+def _worker(job: Callable[[Emit, threading.Event], dict], admission: Admission, out: queue.Queue, cancelled: threading.Event, limits: dict) -> None:
     succeeded = False
 
-    def emit(node: str, status: str, detail: str = "") -> None:
+    def emit(node: str, status: str, detail: str = "", data=None) -> None:
+        """A progress step; `data` carries partial results (a finished slide) to the client."""
         if cancelled.is_set():
             raise Cancelled()
-        out.put({"type": "step", "node": node, "status": status, **({"detail": detail} if detail else {})})
+        out.put({"type": "step", "node": node, "status": status, **({"detail": detail} if detail else {}), **({"data": data} if data is not None else {})})
 
     try:
         waited = GATE.acquire_slot(
@@ -90,7 +91,7 @@ def _worker(job: Callable[[Emit, threading.Event], dict], admission: Admission, 
                 raise Cancelled()
             raise GuardrailViolation(503, "The AI engine is busy. Try again in a few minutes.", "queue_timeout")
         try:
-            with run_context(admission.user_id, admission.endpoint) as ctx:
+            with run_context(admission.user_id, admission.endpoint, **limits) as ctx:
                 result = job(emit, cancelled)
                 if cancelled.is_set():
                     raise Cancelled()
@@ -111,11 +112,13 @@ def _worker(job: Callable[[Emit, threading.Event], dict], admission: Admission, 
         out.put(_END)
 
 
-def stream_job(job: Callable[[Emit, threading.Event], dict], admission: Admission) -> StreamingResponse:
+def stream_job(job: Callable[[Emit, threading.Event], dict], admission: Admission, *, max_calls: int | None = None, seconds: int | None = None) -> StreamingResponse:
+    """Long jobs (a 15-slide design) can raise the per-run call budget and deadline."""
     out: queue.Queue = queue.Queue()
     cancelled = threading.Event()
+    limits = {"max_calls": max_calls, "seconds": seconds}
     try:
-        threading.Thread(target=_worker, args=(job, admission, out, cancelled), daemon=True).start()
+        threading.Thread(target=_worker, args=(job, admission, out, cancelled, limits), daemon=True).start()
     except BaseException:
         admission.refund()
         admission.release()

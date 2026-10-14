@@ -149,6 +149,22 @@ def invoke_text(prompt: str, *, temperature: float = 0.4, max_tokens: int = 1000
     return _guarded(call, prompt, "text")
 
 
+def invoke_html(prompt: str, *, temperature: float = 0.4, max_tokens: int = 2200) -> str:
+    """A design page as HTML. Policy and leak checks run on the reply; the design sanitizer, not the
+    text scrubber, cleans the markup (design/sanitize.py)."""
+    from design.sanitize import visible_text
+
+    messages = _messages(prompt, max_tokens)
+    llm = get_llm(temperature=temperature, max_tokens=max_tokens)
+
+    def call():
+        raw = str(llm.invoke(messages).content)
+        check_output(visible_text(raw), scrub=False)
+        return raw, 0, 0
+
+    return _guarded(call, prompt, "html")
+
+
 def invoke_chat(history: list[dict], *, temperature: float = 0.6, max_tokens: int = 1000) -> str:
     """A conversation turn. `history` ends with the new user message and has already been fitted
     to the model's window by guardrails.conversation."""

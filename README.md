@@ -21,6 +21,8 @@ Accounts use Google sign-in and all user data lives in PostgreSQL.
 
 **Edit**
 - Per-slide AI actions: rewrite, shorten, make punchier, and 3 alternative hooks
+- AI design studio (Create): your idea, then 5 researched topics, then content written slide by slide that you can edit, then one of 5 styles plus your own design ideas. The AI designs every page as free-form HTML, checks each render for overflow and empty space, and exports PDF and PNG. Formats: carousel, presentation, infographic, flyer, and tri-fold brochure. Style prompts live in `Design Prompts/`
+- Edit with AI: a chat in the carousel, deck, and infographic editors that rewrites slides, adds, removes, or reorders them, changes diagrams, captions, hashtags, template, and accent color. Each answer applies as one step you can undo or revert
 - Slide layouts: text, stat callout, list, bar chart, code, screenshot, and sources, plus icons and background photos
 - 8 templates, brand colors, uploaded fonts, saved designs, and multiple brand kits for agencies and multi-brand creators
 - Repurpose any post into every text format, and write separate captions for LinkedIn, Instagram, X, and Threads

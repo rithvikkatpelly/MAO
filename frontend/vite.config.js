@@ -10,9 +10,10 @@ const api = process.env.VITE_API_BASE ?? 'http://localhost:8000'
 const CSP = [
   "default-src 'self'",
   "script-src 'self' https://accounts.google.com/gsi/client",
-  "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
+  // Google Fonts and Font Awesome load inside the sandboxed previews of AI designs.
+  "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style https://fonts.googleapis.com https://cdnjs.cloudflare.com",
   "img-src 'self' data: blob: https:",
-  "font-src 'self' data:",
+  "font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com",
   `connect-src 'self' ${api} https://accounts.google.com/gsi/`,
   'frame-src https://accounts.google.com/gsi/',
   "object-src 'none'",

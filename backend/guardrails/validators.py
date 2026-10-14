@@ -154,15 +154,19 @@ def _all_text(value) -> str:
     return ""
 
 
-def check_output(value, *, classifier: bool = False):
+def check_output(value, *, classifier: bool = False, scrub: bool = True):
     """Validate and clean a model output (a string or a JSON-like value). Raises when the output
-    must not be shown at all; otherwise returns the cleaned value and records warnings."""
+    must not be shown at all; otherwise returns the cleaned value and records warnings.
+    scrub=False skips link and contact removal, for HTML that the design sanitizer cleans instead
+    (a flyer's contact block is meant to carry an email address)."""
     text = normalize(_all_text(value))
     if CANARY in text or _LEAK.search(text):
         raise GuardrailViolation(502, "The AI's answer was withheld because it did not follow Aurea's rules. Please try again.", "leak")
     verdict = moderate(text, use_classifier=classifier, role="assistant")
     if verdict.blocked:
         raise GuardrailViolation(422, f"The AI's answer was withheld because it involved {verdict.describe()}.", "output_policy")
+    if not scrub:
+        return value
     notes: set[str] = set()
     cleaned = _walk(value, notes)
     for note in sorted(notes):

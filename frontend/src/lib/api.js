@@ -66,6 +66,8 @@ export const ai = {
   repurpose: (format, project) => api("/api/ai/repurpose", { method: "POST", body: { format, project } }),
   captions: (platforms, project) => api("/api/ai/captions", { method: "POST", body: { platforms, project } }),
   planWeek: (body) => api("/api/ai/plan-week", { method: "POST", body }),
+  // The editor assistant: a chat request in, a reply and edit operations out (backend/api/assistant.py).
+  edit: (body) => api("/api/ai/edit", { method: "POST", body }),
 };
 
 // Saved snapshots of a project (backend/api/projects.py).
@@ -98,6 +100,29 @@ export const instagram = {
 export const visuals = {
   generate: (body, onStep, signal) => streamPipeline(`${API_BASE}/api/visuals/generate`, body, onStep, signal),
   visualize: (body) => api("/api/visuals/visualize", { method: "POST", body }),
+};
+
+// The AI design studio (backend/api/design.py): topics, content, design, one-page edits, export.
+export const design = {
+  catalog: () => api("/api/design/catalog"),
+  topics: (body, onStep, signal) => streamPipeline(`${API_BASE}/api/design/topics`, body, onStep, signal),
+  content: (body, onStep, signal) => streamPipeline(`${API_BASE}/api/design/content`, body, onStep, signal),
+  generate: (body, onStep, signal) => streamPipeline(`${API_BASE}/api/design/generate`, body, onStep, signal),
+  unit: (body) => api("/api/design/unit", { method: "POST", body }),
+  async export(body) {
+    const res = await fetch(`${API_BASE}/api/design/export`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => ({}))).detail;
+      throw new ApiError(res.status, typeof detail === "string" ? detail : `Export failed (${res.status})`);
+    }
+    const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "design";
+    return { blob: await res.blob(), name };
+  },
 };
 
 // Usage limits, data export, and account deletion (backend/api/account.py).

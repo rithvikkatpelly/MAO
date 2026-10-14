@@ -4,14 +4,19 @@ import { CalendarClock, Copy, FolderOpen, Loader2, MoreHorizontal, Plus, Search,
 import { ConfirmDialog } from "../../components/Dialog";
 import { Menu } from "../../components/Menu";
 import { FitSlide } from "../../components/SlideFrame";
+import DesignFrame from "../../components/design/DesignFrame";
 import { Segmented } from "../../components/controls";
 import { useToast } from "../../components/Toast";
 import { resolveBrand, useBrandKits } from "../../lib/brandkits";
-import { KINDS, STUDIO_FORMATS, TEXT_FORMATS, isStudioKind, kindMeta, sizeOf } from "../../lib/formats";
+import { DESIGN_FORMATS, KINDS, STUDIO_FORMATS, TEXT_FORMATS, isStudioKind, kindMeta, sizeOf } from "../../lib/formats";
+import { useCatalog } from "../../lib/design";
 import { outputToText } from "../../lib/outputs";
 import { blankProject, blankStudioProject } from "../../lib/project";
 import { deleteProject, duplicateProject, insertProject, useBrand, useProjectsState } from "../../lib/storage";
 import { relativeTime } from "../../lib/time";
+
+// Which filter tab an AI-designed project shows under.
+const DESIGN_FILTER = { carousel: "carousel", slides: "deck", infographic: "infographic", flyer: "poster" };
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -37,19 +42,40 @@ function TextThumb({ project }) {
   );
 }
 
+// The first page of an AI-designed project, live in a sandboxed frame.
+function DesignThumb({ project }) {
+  const { catalog } = useCatalog();
+  if (!catalog || !project.slides[0]) return null;
+  const f = catalog.formats[project.format] ?? catalog.formats.carousel;
+  const landscape = !f.height || f.width / f.height > 1;
+  return (
+    <div className="absolute inset-0 flex items-start justify-center overflow-hidden p-[18px]">
+      <DesignFrame catalog={catalog} format={project.format} style={project.style} unit={project.slides[0]} width={landscape ? 240 : 150} className="rounded-md shadow-card" title={project.title} />
+    </div>
+  );
+}
+
+function projectPath(project) {
+  if (project.kind === "design") return `/app/design/${project.id}`;
+  return isStudioKind(project.kind) ? `/app/visual/${project.id}` : `/app/p/${project.id}`;
+}
+
 function ProjectCard({ project, brand, onDelete }) {
   const navigate = useNavigate();
   const toast = useToast();
   const isText = project.kind === "text";
-  const kind = isText ? TEXT_FORMATS[project.textFormat] ?? TEXT_FORMATS.linkedin_post : kindMeta(project.kind);
-  const size = sizeOf(project);
+  const isDesign = project.kind === "design";
+  const kind = isText ? TEXT_FORMATS[project.textFormat] ?? TEXT_FORMATS.linkedin_post : kindMeta(project.kind, project.format);
+  const size = isDesign ? { ratio: (DESIGN_FORMATS[project.format] ?? DESIGN_FORMATS.carousel).ratio } : sizeOf(project);
 
   return (
     <div className="group card relative overflow-hidden transition hover:shadow-pop">
-      <Link to={isStudioKind(project.kind) ? `/app/visual/${project.id}` : `/app/p/${project.id}`} className="block" aria-label={`Open ${project.title}`}>
+      <Link to={projectPath(project)} className="block" aria-label={`Open ${project.title}`}>
         <div className="bg-dots relative aspect-[4/3] border-b border-line">
           {isText ? (
             <TextThumb project={project} />
+          ) : isDesign ? (
+            <DesignThumb project={project} />
           ) : (
             <FitSlide project={project} slide={project.slides[0]} index={0} brand={brand} padding={18} className="absolute inset-0" frameClassName="rounded-md shadow-card" />
           )}
@@ -61,7 +87,7 @@ function ProjectCard({ project, brand, onDelete }) {
           )}
           {!isText && project.slides.length > 1 && (
             <span className="absolute bottom-2.5 left-2.5 rounded-md bg-ink/80 px-1.5 py-0.5 text-[11px] font-medium text-white backdrop-blur">
-              {project.slides.length} {project.kind === "infographic" ? "pages" : "slides"}
+              {project.slides.length} {isDesign ? { infographic: "sections", brochure: "panels" }[project.format] ?? "slides" : project.kind === "infographic" ? "pages" : "slides"}
             </span>
           )}
         </div>
@@ -94,7 +120,7 @@ function ProjectCard({ project, brand, onDelete }) {
           )}
           width="w-44"
           items={[
-            { label: "Open", icon: FolderOpen, onClick: () => navigate(`/app/p/${project.id}`) },
+            { label: "Open", icon: FolderOpen, onClick: () => navigate(projectPath(project)) },
             {
               label: "Duplicate",
               icon: Copy,
@@ -133,7 +159,7 @@ function QuickStart() {
 
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-      <Link to="/app/new" className="group flex flex-col justify-between rounded-2xl bg-ink p-4 text-white transition hover:bg-navy-800 md:col-span-1">
+      <Link to="/app/design/new" className="group flex flex-col justify-between rounded-2xl bg-ink p-4 text-white transition hover:bg-navy-800 md:col-span-1">
         <Sparkles size={18} className="text-accent" />
         <div className="mt-8">
           <p className="text-sm font-semibold">Create with AI</p>
@@ -164,7 +190,10 @@ export default function LibraryPage() {
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return projects.filter(
-      (p) => (filter === "all" || p.kind === filter) && (!q || p.title.toLowerCase().includes(q) || p.slides.some((s) => s.headline.toLowerCase().includes(q))),
+      (p) =>
+        (filter === "all" || p.kind === filter || (p.kind === "design" && DESIGN_FILTER[p.format] === filter)) &&
+        // AI-designed pages keep their words under content
+        (!q || p.title.toLowerCase().includes(q) || p.slides.some((s) => (s.headline ?? s.content?.headline ?? "").toLowerCase().includes(q))),
     );
   }, [projects, query, filter]);
 
@@ -175,7 +204,7 @@ export default function LibraryPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-ink">Projects</h1>
           <p className="mt-1 text-sm text-muted">Carousels, posters, and images you have made.</p>
         </div>
-        <Link to="/app/new" className="btn btn-primary">
+        <Link to="/app/design/new" className="btn btn-primary">
           <Plus size={16} /> New project
         </Link>
       </div>
@@ -209,7 +238,7 @@ export default function LibraryPage() {
           <p className="mt-1 max-w-sm text-sm text-muted">
             Describe a topic and Aurea will research it, write the copy, and design ready-to-post slides.
           </p>
-          <Link to="/app/new" className="btn btn-accent mt-6">
+          <Link to="/app/design/new" className="btn btn-accent mt-6">
             <Sparkles size={15} /> Create your first post
           </Link>
         </div>

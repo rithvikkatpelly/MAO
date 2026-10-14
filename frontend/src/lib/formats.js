@@ -1,4 +1,4 @@
-import { AlignLeft, Clapperboard, GalleryHorizontalEnd, Image, LayoutPanelTop, ListOrdered, Mail, MonitorPlay, PlaySquare, Presentation, RectangleVertical, Type } from "lucide-react";
+import { AlignLeft, BookOpen, Clapperboard, FileText, GalleryHorizontalEnd, Image, LayoutPanelTop, ListOrdered, Mail, MonitorPlay, PlaySquare, Presentation, RectangleVertical, Type } from "lucide-react";
 
 export const SIZES = {
   portrait: { id: "portrait", label: "Portrait", ratio: "4:5", w: 1080, h: 1350, hint: "Instagram and LinkedIn feed" },
@@ -95,8 +95,18 @@ export function isStudioKind(kind) {
   return kind in STUDIO_FORMATS;
 }
 
+// AI-designed HTML projects (pages/app/DesignViewerPage.jsx); `project.format` says which one.
+export const DESIGN_FORMATS = {
+  carousel: { label: "Carousel", ratio: "4:5", icon: GalleryHorizontalEnd },
+  slides: { label: "Presentation", ratio: "16:9", icon: Presentation },
+  infographic: { label: "Infographic", ratio: "Tall", icon: LayoutPanelTop },
+  flyer: { label: "Flyer", ratio: "A4", icon: FileText },
+  brochure: { label: "Brochure", ratio: "Tri-fold", icon: BookOpen },
+};
+
 // Label and icon for any visual project kind.
-export function kindMeta(kind) {
+export function kindMeta(kind, format) {
+  if (kind === "design") return DESIGN_FORMATS[format] ?? DESIGN_FORMATS.carousel;
   return KINDS[kind] ?? STUDIO_FORMATS[kind] ?? KINDS.carousel;
 }
 

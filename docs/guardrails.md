@@ -122,6 +122,25 @@ The cases it is tested against are in `guardrails/evals/semantic.jsonl`: harmful
 sensitive but legitimate look-alikes. `uv run python -m guardrails.evals --live` runs them on the
 real model. Add a case for every miss or false refusal you see.
 
+## AI-designed HTML
+
+The design studio (`backend/api/design.py`) has the model write HTML, which is shown in the app and rendered by
+headless Chromium, so it is treated as untrusted:
+
+- `backend/design/sanitize.py` keeps an allowlist of layout, text, table and SVG elements and layout-only inline
+  styles. It removes scripts, styles, links, images, iframes, forms, event handlers, `url()` values (except SVG
+  `url(#id)` references) and CSS expressions, and prefixes ids per page.
+- Previews render in an iframe with an empty `sandbox` attribute (no scripts, unique origin) and their own
+  Content-Security-Policy that allows only Google Fonts and Font Awesome.
+- Exports re-sanitize the stored HTML on the server and render with JavaScript off. Network requests are limited
+  to the font hosts; everything else is aborted.
+- HTML replies skip the text scrubber, so a flyer can keep its contact email. Policy and prompt-leak checks still run
+  on the visible text.
+- Each page is rendered and measured after it is written. Overflow or more than about 90px of empty space triggers one
+  retry with concrete feedback. If problems remain, the page is flagged to the creator.
+- Quotas: topics and content use research runs, a full design uses one of the day's designs, and redesigning a single
+  page uses an AI edit.
+
 ## Content policy
 
 `guardrails/moderation.py` refuses sexual content involving minors, weapons and explosives,

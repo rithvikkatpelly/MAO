@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 import settings  # loads backend/.env before anything reads the environment
 from agents.orchestrator import AureaState, aurea_graph
-from api import account, ai, auth, instagram, items, profile, projects, trends, visuals
+from api import account, ai, assistant, auth, design, instagram, items, profile, projects, trends, visuals
 from api.auth import current_user
 from api.items import log_pick, log_research
 from db import close_db, connection, db_status, init_db
@@ -49,6 +49,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type"],
+    expose_headers=["Content-Disposition"],  # so downloads keep their file names
 )
 app.add_middleware(OriginGuard, allowed_origins=settings.ALLOWED_ORIGINS)
 app.add_middleware(SecurityHeaders, hsts=settings.COOKIE_SECURE)
@@ -60,6 +61,8 @@ app.include_router(profile.router)
 app.include_router(projects.router)
 app.include_router(items.router)
 app.include_router(ai.router)
+app.include_router(assistant.router)
+app.include_router(design.router)
 app.include_router(trends.router)
 app.include_router(instagram.router)
 app.include_router(visuals.router)

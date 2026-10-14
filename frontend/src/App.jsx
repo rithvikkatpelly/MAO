@@ -18,6 +18,8 @@ const IdeasPage = lazy(() => import("./pages/app/IdeasPage"));
 const InsightsPage = lazy(() => import("./pages/app/InsightsPage"));
 const ConnectionsPage = lazy(() => import("./pages/app/ConnectionsPage"));
 const AccountPage = lazy(() => import("./pages/app/AccountPage"));
+const DesignStudioPage = lazy(() => import("./pages/app/DesignStudioPage"));
+const DesignViewerPage = lazy(() => import("./pages/app/DesignViewerPage"));
 
 function NotFound() {
   return (
@@ -50,6 +52,7 @@ export default function App() {
               <Route path="/app" element={<AppShell />}>
                 <Route index element={<LibraryPage />} />
                 <Route path="new" element={<CreatePage />} />
+                <Route path="design/new" element={<DesignStudioPage />} />
                 <Route path="brand" element={<BrandPage />} />
                 <Route path="calendar" element={<CalendarPage />} />
                 <Route path="ideas" element={<IdeasPage />} />
@@ -59,6 +62,7 @@ export default function App() {
               </Route>
               <Route path="/app/p/:id" element={<EditorPage />} />
               <Route path="/app/visual/:id" element={<VisualEditorPage />} />
+              <Route path="/app/design/:id" element={<DesignViewerPage />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

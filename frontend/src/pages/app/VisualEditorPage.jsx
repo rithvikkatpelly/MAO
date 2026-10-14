@@ -20,6 +20,7 @@ import {
   Redo2,
   Trash2,
   Undo2,
+  WandSparkles,
 } from "lucide-react";
 import { Menu } from "../../components/Menu";
 import { FitSlide, SlideFrame } from "../../components/SlideFrame";
@@ -28,6 +29,7 @@ import { AutoTextarea, CharCount, ColorPicker, Segmented, Toggle } from "../../c
 import HistoryButton from "../../components/editor/HistoryPanel";
 import InstagramPublishButton from "../../components/editor/InstagramPublish";
 import SaveStatus from "../../components/editor/SaveStatus";
+import AssistantPanel from "../../components/editor/AssistantPanel";
 import VisualPanel from "../../components/visual/VisualPanel";
 import { versions } from "../../lib/api";
 import { useAutosave } from "../../lib/autosave";
@@ -270,6 +272,7 @@ const TABS = [
   { value: "visual", label: "Diagram" },
   { value: "text", label: "Text" },
   { value: "design", label: "Design" },
+  { value: "assistant", label: "AI", icon: WandSparkles, title: "Edit with AI" },
 ];
 
 const EXPORT_LABELS = { png: "PNG export", zip: "ZIP export", pdf: "PDF export", pptx: "PowerPoint export", svg: "SVG export" };
@@ -282,6 +285,7 @@ function Studio({ initial }) {
   const deck = project.kind === "deck";
   const [active, setActive] = useState(0);
   const [tab, setTab] = useState("visual");
+  const [chat, setChat] = useState([]); // the AI assistant's conversation, kept while switching tabs
   const [exporting, setExporting] = useState(null);
   const { saveState, flush } = useAutosave(project, initial);
 
@@ -450,11 +454,17 @@ function Studio({ initial }) {
           <div className="border-b border-line p-3">
             <Segmented value={tab} onChange={setTab} options={TABS} />
           </div>
-          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-            {tab === "visual" && <VisualPanel key={slide.id} project={project} slide={slide} onSlide={updateSlide} />}
-            {tab === "text" && <TextPanel project={project} slide={slide} onSlide={updateSlide} onDesign={updateDesign} onProject={update} />}
-            {tab === "design" && <DesignPanel project={project} slide={slide} index={index} brand={brand} onDesign={updateDesign} />}
-          </div>
+          {tab === "assistant" ? (
+            <div className="min-h-0 flex-1">
+              <AssistantPanel project={project} activeIndex={index} onReplace={(next) => set(next)} chat={chat} setChat={setChat} />
+            </div>
+          ) : (
+            <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+              {tab === "visual" && <VisualPanel key={slide.id} project={project} slide={slide} onSlide={updateSlide} />}
+              {tab === "text" && <TextPanel project={project} slide={slide} onSlide={updateSlide} onDesign={updateDesign} onProject={update} />}
+              {tab === "design" && <DesignPanel project={project} slide={slide} index={index} brand={brand} onDesign={updateDesign} />}
+            </div>
+          )}
         </aside>
       </div>
     </div>

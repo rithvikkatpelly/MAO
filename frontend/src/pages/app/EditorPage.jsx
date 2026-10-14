@@ -26,6 +26,7 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { Menu } from "../../components/Menu";
+import AssistantPanel from "../../components/editor/AssistantPanel";
 import CaptionsPanel from "../../components/editor/CaptionsPanel";
 import { ChecklistButton, ScheduleButton } from "../../components/editor/Checks";
 import HistoryButton from "../../components/editor/HistoryPanel";
@@ -490,6 +491,7 @@ const TABS = [
   { value: "design", label: "Design" },
   { value: "post", label: "Post" },
   { value: "repurpose", label: "Repurpose" },
+  { value: "assistant", label: "AI", icon: WandSparkles, title: "Edit with AI" },
 ];
 
 function Editor({ initial }) {
@@ -500,6 +502,7 @@ function Editor({ initial }) {
   const brand = useProjectBrand(project);
   const [active, setActive] = useState(0);
   const [tab, setTab] = useState("slide");
+  const [chat, setChat] = useState([]); // the AI assistant's conversation, kept while switching tabs
   const [exporting, setExporting] = useState(null);
   const wide = useMediaQuery("(min-width: 1024px)");
 
@@ -718,6 +721,11 @@ function Editor({ initial }) {
           <div className="border-b border-line p-3">
             <Segmented value={tab} onChange={setTab} options={TABS} />
           </div>
+          {tab === "assistant" ? (
+            <div className="lg:min-h-0 lg:flex-1">
+              <AssistantPanel project={project} activeIndex={index} onReplace={(next) => set(next)} chat={chat} setChat={setChat} />
+            </div>
+          ) : (
           <div className="scrollbar-thin lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
             {tab === "slide" && <SlidePanel project={project} index={index} onSlide={updateSlide} onClean={() => set((p) => cleanProjectCopy(p))} />}
             {tab === "design" && (
@@ -731,6 +739,7 @@ function Editor({ initial }) {
               </Section>
             )}
           </div>
+          )}
         </aside>
       </div>
     </div>
